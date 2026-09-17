@@ -1,0 +1,4 @@
+-r requirements.txt
+
+# PaddlePaddle 推理框架需按 CPU、NVIDIA 或昇腾环境单独安装，参见 docs/OCR部署手册.md。
+paddleocr[doc-parser]==3.7.0

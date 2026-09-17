@@ -8,6 +8,7 @@
 # Python 本地环境和缓存
 .venv/
 .venv-train/
+.venv-ocr/
 __pycache__/
 *.py[cod]
 .pytest_cache/

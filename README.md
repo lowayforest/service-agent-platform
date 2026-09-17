@@ -1,7 +1,7 @@
 # 航道对外服务智能体
 
 > 当前阶段：本地 RAG MVP 开发与验证
-> 最近更新：2026-09-11
+> 最近更新：2026-09-17
 
 本项目拟建设一个面向船东企业、工程建设单位、设计院、沿江港航企业及社会公众的航道对外服务智能体。第一阶段以千问系列模型为核心，通过 RAG（检索增强生成）连接航道专业资料，先实现答案可追溯的知识问答；随后再接入实时航道数据和业务系统，逐步实现办事指引、航评咨询、事项进度查询和定向信息推送。
 
@@ -11,6 +11,7 @@
 
 - [操作手册](docs/操作手册.md)：本地启动、资料入库、接口调用、测试和常见问题。
 - [部署手册](docs/部署手册.md)：本机部署、双 RTX 5090 服务器部署、vLLM 升级路线、安全和验收。
+- [OCR 部署手册](docs/OCR部署手册.md)：扫描 PDF、DOCX 图片、本机轻量 OCR 和 5090 结构化 OCR。
 - [本地微调冒烟测试](finetune/README.md)：Apple MLX 环境、训练样例、可复现命令和实测结果。
 
 ## 本地最小 RAG 已实现
@@ -33,12 +34,18 @@
 
 ```text
 app/                    # FastAPI、文档解析、检索和问答逻辑
+app/ocr_backends.py     # PP-OCRv5 与 PaddleOCR-VL 后端
+scripts/audit_documents.py # 文档格式、PDF 文本层和内嵌图片审计
+scripts/preprocess.py   # 标准化文本、DOC 转换和 OCR 路由
 scripts/ingest.py       # 文档导入与索引构建命令
-tests/test_core.py      # 分段、检索和实时问题边界测试
+tests/                  # 分段、检索、边界和预处理测试
+data/manifests/         # 本地生成的文档审计台账，不提交 Git
+data/processed/         # 本地生成的标准 Markdown，不提交 Git
 data/index.json         # 本地生成的向量索引，不提交 Git
 profile/                # 原始资料，不提交 Git
 .env.example            # 环境变量示例
 requirements.txt        # Python 依赖
+requirements-ocr.txt    # 独立 OCR 环境依赖
 ```
 
 ### 1. 准备本地环境
@@ -62,7 +69,41 @@ ollama pull qwen3-embedding:0.6b
 cp .env.example .env
 ```
 
-### 2. 构建演示知识库
+### 2. 审计和预处理真实资料
+
+先生成文档台账，每份 PDF 抽样检查前 5 页：
+
+```bash
+python -m scripts.audit_documents profile --pdf-page-limit 5
+```
+
+需要逐页确认时使用 `--pdf-page-limit 0`。结果保存到被 Git 忽略的
+`data/manifests/document-audit.jsonl`。
+
+对已选择的少量样本执行标准化：
+
+```bash
+python -m scripts.preprocess "profile/已确认的首批样本目录"
+```
+
+命令会将可提取内容写入 `data/processed/`，并将文件标记为 `ready`、
+`needs_ocr`、`partial_needs_ocr`、`partial_needs_image_ocr`、`needs_conversion`
+或 `unsupported`。
+
+需要实际执行 OCR 时，使用独立的 Python 3.12 环境。轻量后端适合本机功能验证：
+
+```bash
+.venv-ocr/bin/python -m scripts.preprocess "profile/已确认的扫描样本.pdf" \
+  --ocr-backend paddleocr \
+  --ocr-device cpu
+```
+
+双 RTX 5090 服务器在管理员确认 CUDA 12.9 驱动兼容后，才使用
+`--ocr-backend paddleocr-vl --ocr-device gpu:0`，以保留表格、标题和阅读顺序。
+项目会拒绝 VL+CPU 或无可见 CUDA GPU 的运行方式；16 GB Mac 上不要再尝试 VL 推理。
+详细安装及验收步骤见 [OCR 部署手册](docs/OCR部署手册.md)。
+
+### 3. 构建演示知识库
 
 先用 README 自身验证流程，不读取整批原始资料：
 
@@ -78,9 +119,10 @@ python -m scripts.ingest \
   "profile/材料一/技术标准等（第一部分）/某份标准.pdf"
 ```
 
-当前解析器支持 `.md`、`.txt`、文本型 `.pdf`、`.docx` 和 `.xlsx`。扫描 PDF 尚未配置 OCR，旧版 `.doc` 需要先转换为 DOCX 或 PDF。
+当前解析器支持 `.md`、`.txt`、文本型 `.pdf`、`.docx` 和 `.xlsx`。扫描 PDF 和
+DOCX 内嵌图片可在独立 OCR 环境中处理；旧版 `.doc` 需要先转换为 DOCX 或 PDF。
 
-### 3. 启动和调用 API
+### 4. 启动和调用 API
 
 ```bash
 uvicorn app.main:app --reload --port 8000
@@ -110,13 +152,17 @@ curl -X POST http://127.0.0.1:8000/api/chat \
   -d '{"question":"今天某航段的实时水深是多少？"}'
 ```
 
-### 4. 运行自动测试
+### 5. 运行自动测试
 
 ```bash
 python -m unittest discover -v
 ```
 
-这个版本面向单机 PoC：JSON 向量索引适合小批量样本文档，不适合作为生产数据库；还没有 OCR、重排模型、用户认证、多轮会话、运营后台和实时业务接口。
+这个版本面向单机 PoC：JSON 向量索引适合小批量样本文档，不适合作为生产数据库；
+已接入可选 OCR 后端，但还没有重排模型、用户认证、多轮会话、运营后台和实时业务接口。
+
+2026-09-17 已用 PP-OCRv5 mobile 成功处理一份 3 页真实扫描 PDF，得到 2,410 个字符和
+3 个页级来源片段。轻量后端会丢失复杂表格的行列关系，不能代替正式的 PaddleOCR-VL 验收。
 
 ## 一句话结论
 
@@ -180,6 +226,25 @@ python -m unittest discover -v
 | `目录清单` | 4 | 公共服务信息、法律法规、标准和规定的 Excel 清单，可作为资料台账或元数据初始化来源 |
 
 候选资料格式包括 156 个 PDF、109 个 DOCX、17 个旧版 DOC、4 个 XLSX，以及 1 个缺少扩展名的文件。
+
+### 文档可解析性初步审计
+
+2026-09-17 对 `profile/` 全部 288 份文件（含需求文档）生成了本地审计台账。
+PDF 分类使用每份前 5 页的启发式检查，不等于正式 OCR 验收：
+
+| 项目 | 结果 |
+| --- | ---: |
+| 文件总数 | 288 |
+| 总体积 | 约 1.09 GiB |
+| PDF 页数 | 7,834 |
+| 文本型 PDF | 77 |
+| 疑似扫描 PDF | 71 |
+| 文本/扫描混合 PDF | 8 |
+| 包含内嵌图片的 DOCX | 51 |
+| 待转换旧版 DOC | 17 |
+| 不支持的无扩展名文件 | 1 |
+
+内嵌图片可能只是徽标或装饰，也可能包含业务文字，需在 OCR 验证中进一步区分。
 
 ### 适合建立的知识集合
 
@@ -398,7 +463,18 @@ MVP 的交付物应包括：资料台账、入库流水线、可重复构建的�
 
 ### 实验室双 RTX 5090 服务器
 
-该服务器作为当前首选模型验证环境，计划优先部署 `Qwen3.5-27B`，并对比 `Qwen3.5-35B-A3B`。GPU 显存、驱动、CUDA、系统内存、磁盘和 PCIe 拓扑尚待现场采集，不能仅凭“两张 5090”直接确定最终精度、并行方式和并发参数。
+该服务器作为当前首选模型验证环境，先用 `Qwen3.5-9B` 跑通部署，随后评估
+`Qwen3.5-27B`，并对比 `Qwen3.5-35B-A3B`。
+2026-09-17 已完成只读硬件采集：
+
+- Ubuntu 20.04.6 LTS、x86_64。
+- 2 × Intel Xeon Platinum 8481C，112 物理核、224 线程。
+- 251 GiB 内存，系统盘可用空间约 410 GB。
+- 2 × RTX 5090，单卡 32,607 MiB，驱动 570.133.07，驱动显示 CUDA 12.8。
+- 两卡跨 NUMA，拓扑为 `SYS`，未发现 NVLink。
+- 尚未安装 CUDA Toolkit、Docker、NVIDIA Container Toolkit、Conda 或 Ollama。
+
+两张卡不能按一块连续 64 GB 显存使用；并行方式、上下文和并发参数仍需模型实测。
 
 ### 黄河服务器 Huanghe 2280 V2
 

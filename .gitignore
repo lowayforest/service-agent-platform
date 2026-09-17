@@ -4,3 +4,22 @@
 # macOS 文件系统元数据
 .DS_Store
 **/.DS_Store
+
+# Python 本地环境和缓存
+.venv/
+.venv-train/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.env
+
+# 本地构建的知识库索引和运行日志
+/data/*
+!/data/.gitkeep
+/logs/
+
+# 本地微调产物（训练样例配置可以提交，权重和私有数据不能提交）
+/finetune/outputs/
+/finetune/data/private/

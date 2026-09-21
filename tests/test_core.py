@@ -122,6 +122,7 @@ class RAGServiceTests(unittest.TestCase):
 
     def test_prompt_forbids_unsupported_general_advice(self) -> None:
         self.assertIn("不得补充证据未直接支持", SYSTEM_PROMPT)
+        self.assertIn("同时匹配行标题与列标题", SYSTEM_PROMPT)
 
     def test_catalog_lookup_uses_spreadsheet_candidates_instead_of_named_pdf(self) -> None:
         named_pdf = SearchResult(

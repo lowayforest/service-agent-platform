@@ -3,9 +3,28 @@ from __future__ import annotations
 import unittest
 
 from app.chunking import chunk_parts
+from app.config import Settings
 from app.document_loader import DocumentPart
-from app.rag_service import is_realtime_question
-from app.vector_store import cosine_similarity, lexical_score, normalize
+from app.rag_service import RAGService, SYSTEM_PROMPT, is_realtime_question
+from app.vector_store import SearchResult, cosine_similarity, lexical_score, normalize
+
+
+class FakeChatClient:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def chat(self, *args):
+        self.calls.append(args)
+        return "依据证据作答 [S1]"
+
+
+class FakeStore:
+    def __init__(self, results, chunk_count=1) -> None:
+        self.results = results
+        self.chunk_count = chunk_count
+
+    def search(self, question, top_k):
+        return self.results[:top_k]
 
 
 class ChunkingTests(unittest.TestCase):
@@ -44,6 +63,47 @@ class BoundaryTests(unittest.TestCase):
 
     def test_live_api_value_is_still_blocked(self) -> None:
         self.assertTrue(is_realtime_question("当前水深接口返回的数据是多少？"))
+
+
+class RAGServiceTests(unittest.TestCase):
+    def make_service(self, results, *, chunk_count=1, min_score=0.45):
+        client = FakeChatClient()
+        settings = Settings(rag_min_score=min_score)
+        store = FakeStore(results, chunk_count=chunk_count)
+        return RAGService(settings, client, store), client
+
+    def test_low_score_results_are_rejected_without_calling_chat_model(self) -> None:
+        result = SearchResult("c1", "资料.md", "正文", "无关内容", 0.44)
+        service, client = self.make_service([result])
+
+        response = service.answer("管理员手机号是什么？")
+
+        self.assertIn("现有知识库无法确认", response["answer"])
+        self.assertEqual(response["sources"], [])
+        self.assertEqual(client.calls, [])
+
+    def test_only_results_meeting_threshold_are_sent_to_chat_model(self) -> None:
+        relevant = SearchResult("c1", "资料.md", "正文", "维护水深为 3.5 米", 0.7)
+        weak = SearchResult("c2", "目录.md", "正文", "文件目录", 0.3)
+        service, client = self.make_service([relevant, weak])
+
+        response = service.answer("维护水深是多少？")
+
+        self.assertEqual([source["chunk_id"] for source in response["sources"]], ["c1"])
+        self.assertEqual(len(client.calls), 1)
+        self.assertIn("维护水深为 3.5 米", client.calls[0][2])
+        self.assertNotIn("文件目录", client.calls[0][2])
+
+    def test_empty_index_keeps_setup_guidance(self) -> None:
+        service, client = self.make_service([], chunk_count=0)
+
+        response = service.answer("任意问题")
+
+        self.assertIn("请先运行文档导入命令", response["answer"])
+        self.assertEqual(client.calls, [])
+
+    def test_prompt_forbids_unsupported_general_advice(self) -> None:
+        self.assertIn("不得补充证据未直接支持", SYSTEM_PROMPT)
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ class Settings:
     embedding_model: str = os.getenv("EMBEDDING_MODEL", "qwen3-embedding:0.6b")
     index_path: Path = Path(os.getenv("INDEX_PATH", "data/index.json"))
     rag_top_k: int = int(os.getenv("RAG_TOP_K", "4"))
+    rag_min_score: float = float(os.getenv("RAG_MIN_SCORE", "0.45"))
     num_ctx: int = int(os.getenv("RAG_NUM_CTX", "8192"))
     request_timeout: float = float(os.getenv("OLLAMA_TIMEOUT", "600"))
 

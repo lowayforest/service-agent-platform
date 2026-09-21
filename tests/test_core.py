@@ -141,7 +141,71 @@ class RAGServiceTests(unittest.TestCase):
         self.assertTrue(is_catalog_lookup("文件清单中序号 66 的名称是什么？"))
         self.assertEqual([source["chunk_id"] for source in response["sources"]], ["xlsx"])
         self.assertNotIn("大慌张背礁石", client.calls[0][2])
-        self.assertEqual(service.store.last_top_k, 10)
+        self.assertEqual(service.store.last_top_k, 16)
+
+    def test_legal_effective_date_prefers_body_clause_over_directory(self) -> None:
+        directory = SearchResult(
+            "directory",
+            "法律法规文件目录.xlsx.md",
+            "工作表：sheet1",
+            "中华人民共和国航道法 | 2016-09-01",
+            0.72,
+        )
+        introduction = SearchResult(
+            "intro",
+            "中华人民共和国航道法.docx.md",
+            "正文",
+            "中华人民共和国航道法 第一章 总则",
+            0.68,
+        )
+        clause = SearchResult(
+            "clause",
+            "中华人民共和国航道法.docx.md",
+            "正文",
+            "第四十八条 本法自2015年3月1日起施行。",
+            0.59,
+        )
+        service, client = self.make_service([directory, introduction, clause])
+
+        response = service.answer("《中华人民共和国航道法》从哪一天开始施行？")
+
+        self.assertEqual(response["sources"][0]["chunk_id"], "clause")
+        self.assertNotIn("2016-09-01", client.calls[0][2])
+
+    def test_source_family_filters_monthly_scale_from_annual_plan(self) -> None:
+        annual = SearchResult(
+            "annual",
+            "2026年度长江干线主航道养护尺度计划表.pdf.md",
+            "第 2 页",
+            "武汉长江大桥至安庆吉阳矶 6月 6米",
+            0.78,
+        )
+        monthly = SearchResult(
+            "monthly",
+            "2026年6月份长江干线航道维护尺度.pdf.md",
+            "第 2 页",
+            "武汉长江大桥至安庆吉阳矶 水深 7.5米",
+            0.64,
+        )
+        service, client = self.make_service([annual, monthly])
+
+        response = service.answer("2026年6月份航道维护尺度中，该航段水深是多少？")
+
+        self.assertEqual([source["chunk_id"] for source in response["sources"]], ["monthly"])
+        self.assertNotIn("6月 6米", client.calls[0][2])
+
+    def test_exact_sequence_row_can_pass_general_score_threshold(self) -> None:
+        heading = SearchResult(
+            "heading", "碍航礁石汇总表.pdf.md", "标题", "碍航礁石汇总表", 0.8
+        )
+        exact_row = SearchResult(
+            "row22", "碍航礁石汇总表.pdf.md", "第 2 页", "22 白鹤梁", 0.42
+        )
+        service, _ = self.make_service([heading, exact_row])
+
+        response = service.answer("碍航礁石汇总表中，序号22的名称是什么？")
+
+        self.assertEqual(response["sources"][0]["chunk_id"], "row22")
 
 
 if __name__ == "__main__":

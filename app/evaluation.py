@@ -78,6 +78,12 @@ def evaluate_response(case: Dict[str, Any], response: Dict[str, Any]) -> List[st
         if normalize_text(keyword) not in normalized_sources:
             failures.append(f"来源缺少关键词：{keyword}")
 
+    source_options = case.get("source_contains_any", [])
+    if source_options and not any(
+        normalize_text(keyword) in normalized_sources for keyword in source_options
+    ):
+        failures.append(f"来源未命中任一关键词：{source_options}")
+
     if case.get("expect_no_sources") is True and sources:
         failures.append(f"预期来源为空，实际返回 {len(sources)} 条")
     if case.get("expect_sources") is True and not sources:

@@ -122,7 +122,10 @@ class VectorStore:
         results = []
         for item in self._chunks:
             semantic = max(0.0, cosine_similarity(query_vector, item["embedding"]))
-            lexical = lexical_score(query, item["text"])
+            searchable_text = " ".join(
+                (item.get("source", ""), item.get("locator", ""), item["text"])
+            )
+            lexical = lexical_score(query, searchable_text)
             score = semantic * 0.8 + lexical * 0.2
             results.append(
                 SearchResult(

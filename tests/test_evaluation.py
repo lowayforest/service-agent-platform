@@ -54,6 +54,14 @@ class EvaluationTests(unittest.TestCase):
         self.assertTrue(any("答案缺少关键词" in item for item in failures))
         self.assertTrue(any("预期来源为空" in item for item in failures))
 
+    def test_accepts_any_configured_source_keyword(self) -> None:
+        case = {"source_contains_any": ["实际标准.pdf", "标准目录.xlsx"]}
+        response = {
+            "answer": "标准名称",
+            "sources": [{"source": "标准目录.xlsx", "locator": "工作表"}],
+        }
+        self.assertEqual(evaluate_response(case, response), [])
+
     def test_load_cases_rejects_duplicate_ids(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "cases.jsonl"

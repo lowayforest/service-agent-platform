@@ -5,7 +5,12 @@ import unittest
 from app.chunking import chunk_parts
 from app.config import Settings
 from app.document_loader import DocumentPart
-from app.rag_service import RAGService, SYSTEM_PROMPT, is_realtime_question
+from app.rag_service import (
+    RAGService,
+    SYSTEM_PROMPT,
+    is_catalog_lookup,
+    is_realtime_question,
+)
 from app.vector_store import SearchResult, cosine_similarity, lexical_score, normalize
 
 
@@ -22,8 +27,10 @@ class FakeStore:
     def __init__(self, results, chunk_count=1) -> None:
         self.results = results
         self.chunk_count = chunk_count
+        self.last_top_k = None
 
     def search(self, question, top_k):
+        self.last_top_k = top_k
         return self.results[:top_k]
 
 
@@ -115,6 +122,26 @@ class RAGServiceTests(unittest.TestCase):
 
     def test_prompt_forbids_unsupported_general_advice(self) -> None:
         self.assertIn("不得补充证据未直接支持", SYSTEM_PROMPT)
+
+    def test_catalog_lookup_uses_spreadsheet_candidates_instead_of_named_pdf(self) -> None:
+        named_pdf = SearchResult(
+            "pdf", "碍航礁石汇总表.pdf.md", "第 1 页", "序号 1 大慌张背礁石", 0.87
+        )
+        catalog = SearchResult(
+            "xlsx",
+            "公共服务信息等.xlsx.md",
+            "工作表：文件清单",
+            "序号 | 名称\n66 | 长江干线宜昌至宜宾航段主要碍航礁石汇总表",
+            0.72,
+        )
+        service, client = self.make_service([named_pdf, catalog])
+
+        response = service.answer("公共服务信息目录中，碍航礁石汇总表的序号是多少？")
+
+        self.assertTrue(is_catalog_lookup("文件清单中序号 66 的名称是什么？"))
+        self.assertEqual([source["chunk_id"] for source in response["sources"]], ["xlsx"])
+        self.assertNotIn("大慌张背礁石", client.calls[0][2])
+        self.assertEqual(service.store.last_top_k, 10)
 
 
 if __name__ == "__main__":

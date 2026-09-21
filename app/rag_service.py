@@ -24,12 +24,27 @@ _DYNAMIC_WORDS = re.compile(r"水深|水位|气象|天气|航道管制|航行通
 _DESIGN_WORDS = re.compile(
     r"为什么|如何(?:接入|设计|实现)|怎么(?:接入|设计|实现)|需求分析|技术方案|能力边界|规则|规定"
 )
+_CATALOG_WORDS = re.compile(r"目录|清单")
+_CATALOG_FIELD_WORDS = re.compile(r"序号|文件名|文件名称|名称")
 
 
 def is_realtime_question(question: str) -> bool:
     if _DESIGN_WORDS.search(question):
         return False
     return bool(_TIME_WORDS.search(question) and _DYNAMIC_WORDS.search(question))
+
+
+def is_catalog_lookup(question: str) -> bool:
+    return bool(_CATALOG_WORDS.search(question) and _CATALOG_FIELD_WORDS.search(question))
+
+
+def is_catalog_result(result: SearchResult) -> bool:
+    source = result.source.lower()
+    return (
+        source.endswith((".xlsx", ".xlsx.md"))
+        or result.locator.startswith("工作表：")
+        or "序号 | 名称" in result.text
+    )
 
 
 class RAGService:
@@ -50,7 +65,15 @@ class RAGService:
                 "blocked_realtime": True,
             }
 
-        results = self.store.search(question, top_k or self.settings.rag_top_k)
+        result_limit = top_k or self.settings.rag_top_k
+        catalog_lookup = is_catalog_lookup(question)
+        candidate_limit = max(result_limit, 10) if catalog_lookup else result_limit
+        results = self.store.search(question, candidate_limit)
+        if catalog_lookup:
+            catalog_results = [result for result in results if is_catalog_result(result)]
+            if catalog_results:
+                results = catalog_results
+        results = results[:result_limit]
         if not results and self.store.chunk_count == 0:
             return {
                 "answer": "知识库尚未建立或没有可用内容。请先运行文档导入命令构建索引。",

@@ -37,7 +37,7 @@
 - 实验室双 RTX 5090 服务器已经部署 `qwen3.5:9b` 和 `qwen3-embedding:0.6b`。
 - 28 份代表性资料已生成 541 个索引片段。
 - 由 `initial-20.jsonl` 与 `expanded-30.jsonl` 组成的 50 题评测集通过 50 题，失败 0 题。
-- 当前 43 项单元测试全部通过。
+- 当前 49 项单元测试全部通过。
 - 平均完整响应时间约 0.98 秒，中位数约 0.92 秒，最大约 4.38 秒；该结果仅代表单用户、当前样本和当前服务器，不是生产并发指标。
 - 已验证法规、标准、历史公共服务信息、PDF 表格、XLSX 目录、跨文档比较、无答案拒答和实时问题拦截。
 
@@ -51,6 +51,7 @@ app/                    # FastAPI、文档解析、检索和问答逻辑
 app/ocr_backends.py     # PP-OCRv5 与 PaddleOCR-VL 后端
 scripts/audit_documents.py # 文档格式、PDF 文本层和内嵌图片审计
 scripts/preprocess.py   # 标准化文本、DOC 转换和 OCR 路由
+scripts/build_knowledge_base.py # 可续跑的全量预处理与原子索引构建
 scripts/ingest.py       # 文档导入与索引构建命令
 scripts/evaluate.py     # 批量调用 API 并生成评测报告
 evals/                  # 可提交的公开评测集

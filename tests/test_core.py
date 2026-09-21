@@ -39,6 +39,17 @@ class ChunkingTests(unittest.TestCase):
         parts = [DocumentPart("a.txt", "正文", "相同的内容")]
         self.assertEqual(chunk_parts(parts)[0].chunk_id, chunk_parts(parts)[0].chunk_id)
 
+    def test_tabular_chunks_repeat_header_and_keep_rows_intact(self) -> None:
+        rows = ["序号 | 名称"] + [f"{number} | 第{number}份航道资料" for number in range(1, 67)]
+        part = DocumentPart("目录.xlsx", "工作表：文件清单", "\n".join(rows))
+
+        chunks = chunk_parts([part], chunk_size=240, overlap=20)
+
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(chunk.text.startswith("序号 | 名称\n") for chunk in chunks))
+        self.assertEqual(sum("61 | 第61份航道资料" in chunk.text for chunk in chunks), 1)
+        self.assertTrue(all(len(chunk.text) <= 240 for chunk in chunks))
+
 
 class RetrievalTests(unittest.TestCase):
     def test_normalized_cosine_similarity(self) -> None:

@@ -42,6 +42,19 @@ def load_cases(path: Path) -> List[Dict[str, Any]]:
     return cases
 
 
+def load_case_files(paths: Iterable[Path]) -> List[Dict[str, Any]]:
+    cases: List[Dict[str, Any]] = []
+    seen_ids = set()
+    for path in paths:
+        for case in load_cases(path):
+            case_id = case["id"]
+            if case_id in seen_ids:
+                raise ValueError(f"多个评测文件之间 id 重复：{case_id}")
+            seen_ids.add(case_id)
+            cases.append(case)
+    return cases
+
+
 def evaluate_response(case: Dict[str, Any], response: Dict[str, Any]) -> List[str]:
     failures: List[str] = []
     answer = str(response.get("answer", ""))

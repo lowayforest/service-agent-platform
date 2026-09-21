@@ -5,7 +5,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from app.evaluation import evaluate_response, load_cases, normalize_text, run_cases
+from app.evaluation import (
+    evaluate_response,
+    load_case_files,
+    load_cases,
+    normalize_text,
+    run_cases,
+)
 
 
 class FakeEvaluationClient:
@@ -60,6 +66,18 @@ class EvaluationTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "id 重复"):
                 load_cases(path)
+
+    def test_load_case_files_rejects_ids_repeated_across_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = root / "first.jsonl"
+            second = root / "second.jsonl"
+            payload = json.dumps({"id": "same", "question": "问题"}, ensure_ascii=False)
+            first.write_text(payload, encoding="utf-8")
+            second.write_text(payload, encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "多个评测文件之间 id 重复"):
+                load_case_files([first, second])
 
     def test_run_cases_summarizes_categories(self) -> None:
         cases = [

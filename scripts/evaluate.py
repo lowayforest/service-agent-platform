@@ -4,12 +4,18 @@ import argparse
 import json
 from pathlib import Path
 
-from app.evaluation import EvaluationClient, load_cases, run_cases, write_json, write_jsonl
+from app.evaluation import (
+    EvaluationClient,
+    load_case_files,
+    run_cases,
+    write_json,
+    write_jsonl,
+)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="调用 RAG API 执行 JSONL 评测集。")
-    parser.add_argument("cases", type=Path, help="JSONL 评测文件")
+    parser.add_argument("cases", nargs="+", type=Path, help="一个或多个 JSONL 评测文件")
     parser.add_argument(
         "--base-url",
         default="http://127.0.0.1:8000",
@@ -36,7 +42,7 @@ def main() -> int:
     if args.timeout <= 0:
         raise SystemExit("--timeout 必须大于 0")
     try:
-        cases = load_cases(args.cases)
+        cases = load_case_files(args.cases)
     except (OSError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
 

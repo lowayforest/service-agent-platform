@@ -115,7 +115,7 @@ python -m scripts.preprocess "profile/已确认的首批样本目录"
 标准化，71 份扫描 PDF 和 8 份混合 PDF 进入 OCR 队列。17 份旧版 DOC 已通过 macOS
 `textutil` 转换；无扩展名文件已按 PDF 识别；51 份 DOCX 中完全相同且经人工核验的 74×74
 国徽小图，依据内容校验值记录为装饰图片而不送入 OCR。未知小图片不会因尺寸被自动忽略。
-正式 OCR 和最终入库尚未执行，当前索引没有被替换。
+71 份扫描 PDF 和 8 份混合 PDF 的全量 OCR 及最终入库尚未执行，当前索引没有被替换。
 
 全量构建器会额外生成 `ocr-queue.jsonl`（按 1～3 页小样本优先排序）和
 `duplicate-groups.jsonl`（相同 SHA-256 对应的全部文件名），便于小批量 OCR 与人工去重。
@@ -128,8 +128,10 @@ python -m scripts.preprocess "profile/已确认的首批样本目录"
   --ocr-device cpu
 ```
 
-双 RTX 5090 服务器在管理员确认 CUDA 12.9 驱动兼容后，才使用
-`--ocr-backend paddleocr-vl --ocr-device gpu:0`，以保留表格、标题和阅读顺序。
+双 RTX 5090 服务器已经升级到 NVIDIA 驱动 580.126.09，并使用
+`--ocr-backend paddleocr-vl --ocr-device gpu:1` 完成 PaddleOCR-VL 1.6 验证，以保留表格、
+标题和阅读顺序。先导与批量样本共 10 份、141 页，自动验收结果为 10/10 通过：130 页有
+OCR 内容，另 11 页确认为纯白空白页；人工内容审核仍待完成。
 项目会拒绝 VL+CPU 或无可见 CUDA GPU 的运行方式；16 GB Mac 上不要再尝试 VL 推理。
 详细安装及验收步骤见 [OCR 部署手册](docs/OCR部署手册.md)。
 

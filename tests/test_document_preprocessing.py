@@ -344,6 +344,42 @@ class PaddleOCRBackendTests(unittest.TestCase):
         self.assertEqual(parts[0].locator, "第 1 页（OCR）")
         self.assertEqual(parts[1].locator, "第 3 页（OCR）")
 
+    def test_vl_uses_original_zero_based_page_index_when_results_skip_pages(self) -> None:
+        results = [
+            SimpleNamespace(markdown={"page_index": 0, "markdown_texts": "第一页"}),
+            SimpleNamespace(markdown={"page_index": 4, "markdown_texts": "第五页"}),
+        ]
+        pipeline = SimpleNamespace(
+            predict=lambda **_: results
+        )
+        backend = PaddleOCRVLBackend(device="gpu:0", pipeline=pipeline)
+
+        parts = backend.extract(Path("scan.pdf"))
+
+        self.assertEqual([part.locator for part in parts], [
+            "第 1 页（OCR）",
+            "第 5 页（OCR）",
+        ])
+
+    def test_text_backend_reads_page_index_from_serialized_result(self) -> None:
+        pipeline = SimpleNamespace(
+            predict=lambda **_: [
+                SimpleNamespace(
+                    json={
+                        "res": {
+                            "page_index": 6,
+                            "rec_texts": ["第七页内容"],
+                        }
+                    }
+                )
+            ]
+        )
+        backend = PaddleOCRTextBackend(pipeline=pipeline)
+
+        parts = backend.extract(Path("scan.pdf"))
+
+        self.assertEqual(parts[0].locator, "第 7 页（OCR）")
+
 
 class PreprocessCLITests(unittest.TestCase):
     def test_vl_cpu_is_rejected_before_document_discovery(self) -> None:

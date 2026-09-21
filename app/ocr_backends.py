@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from app.document_loader import DocumentPart, display_path
 
@@ -10,6 +10,39 @@ from app.document_loader import DocumentPart, display_path
 def is_gpu_device(device: str) -> bool:
     """PaddleOCR-VL 只接受显式指定的 CUDA GPU 设备。"""
     return re.fullmatch(r"gpu(?::\d+)?", device) is not None
+
+
+def _page_number_from_result(
+    result: Any,
+    payload: Any,
+    fallback: int,
+) -> int:
+    """Return Paddle's original PDF page number, falling back to result order.
+
+    PaddleX exposes a zero-based ``page_index`` in both its result mapping and
+    serialized payload.  Reading that field is more robust than assuming every
+    Paddle version yields one result for every PDF page (including blank pages).
+    Images do not have a page index, so they retain the one-based result order.
+    """
+    candidates = []
+    if isinstance(payload, Mapping):
+        candidates.append(payload.get("page_index"))
+        nested = payload.get("res")
+        if isinstance(nested, Mapping):
+            candidates.append(nested.get("page_index"))
+    if isinstance(result, Mapping):
+        candidates.append(result.get("page_index"))
+    else:
+        candidates.append(getattr(result, "page_index", None))
+
+    for page_index in candidates:
+        if isinstance(page_index, bool):
+            continue
+        if isinstance(page_index, int) and page_index >= 0:
+            return page_index + 1
+        if isinstance(page_index, str) and page_index.isdigit():
+            return int(page_index) + 1
+    return fallback
 
 
 class PaddleOCRTextBackend:
@@ -45,11 +78,12 @@ class PaddleOCRTextBackend:
     def extract(self, path: Path) -> list[DocumentPart]:
         parts: list[DocumentPart] = []
         results = self._get_pipeline().predict(input=str(path))
-        for page_number, result in enumerate(results, start=1):
+        for result_number, result in enumerate(results, start=1):
             payload = getattr(result, "json", None)
             if not isinstance(payload, dict):
                 continue
             data = payload.get("res", payload)
+            page_number = _page_number_from_result(result, payload, result_number)
             texts = data.get("rec_texts", []) if isinstance(data, dict) else []
             text = "\n".join(
                 item.strip() for item in texts if isinstance(item, str) and item.strip()
@@ -126,10 +160,11 @@ class PaddleOCRVLBackend:
     def extract(self, path: Path) -> list[DocumentPart]:
         parts: list[DocumentPart] = []
         results = self._get_pipeline().predict(input=str(path))
-        for page_number, result in enumerate(results, start=1):
+        for result_number, result in enumerate(results, start=1):
             markdown = getattr(result, "markdown", None)
             if not isinstance(markdown, dict):
                 continue
+            page_number = _page_number_from_result(result, markdown, result_number)
             text = markdown.get("markdown_texts") or markdown.get("text") or ""
             if not isinstance(text, str) or not text.strip():
                 continue

@@ -12,6 +12,7 @@
 - [操作手册](docs/操作手册.md)：本地启动、资料入库、接口调用、测试和常见问题。
 - [部署手册](docs/部署手册.md)：本机部署、双 RTX 5090 服务器部署、vLLM 升级路线、安全和验收。
 - [OCR 部署手册](docs/OCR部署手册.md)：扫描 PDF、DOCX 图片、本机轻量 OCR 和 5090 结构化 OCR。
+- [评测手册](docs/评测手册.md)：固定评测集、自动检查、失败分析和参数调优。
 - [本地微调冒烟测试](finetune/README.md)：Apple MLX 环境、训练样例、可复现命令和实测结果。
 
 ## 本地最小 RAG 已实现
@@ -38,6 +39,8 @@ app/ocr_backends.py     # PP-OCRv5 与 PaddleOCR-VL 后端
 scripts/audit_documents.py # 文档格式、PDF 文本层和内嵌图片审计
 scripts/preprocess.py   # 标准化文本、DOC 转换和 OCR 路由
 scripts/ingest.py       # 文档导入与索引构建命令
+scripts/evaluate.py     # 批量调用 API 并生成评测报告
+evals/                  # 可提交的公开评测集
 tests/                  # 分段、检索、边界和预处理测试
 data/manifests/         # 本地生成的文档审计台账，不提交 Git
 data/processed/         # 本地生成的标准 Markdown，不提交 Git

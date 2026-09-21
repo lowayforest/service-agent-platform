@@ -19,6 +19,8 @@ class Settings:
     rag_top_k: int = int(os.getenv("RAG_TOP_K", "4"))
     rag_min_score: float = float(os.getenv("RAG_MIN_SCORE", "0.45"))
     num_ctx: int = int(os.getenv("RAG_NUM_CTX", "8192"))
+    generation_temperature: float = float(os.getenv("RAG_TEMPERATURE", "0"))
+    generation_seed: int = int(os.getenv("RAG_SEED", "42"))
     request_timeout: float = float(os.getenv("OLLAMA_TIMEOUT", "600"))
 
 

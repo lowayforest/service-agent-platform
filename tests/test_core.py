@@ -8,6 +8,7 @@ from app.document_loader import DocumentPart
 from app.rag_service import (
     RAGService,
     SYSTEM_PROMPT,
+    is_annual_plan_question,
     is_catalog_lookup,
     is_realtime_question,
 )
@@ -137,12 +138,71 @@ class RAGServiceTests(unittest.TestCase):
         )
         service, client = self.make_service([named_pdf, catalog])
 
-        response = service.answer("公共服务信息目录中，碍航礁石汇总表的序号是多少？")
+        response = service.answer(
+            "公共服务信息目录中，长江干线宜昌至宜宾航段主要碍航礁石汇总表的序号是多少？"
+        )
 
         self.assertTrue(is_catalog_lookup("文件清单中序号 66 的名称是什么？"))
         self.assertEqual([source["chunk_id"] for source in response["sources"]], ["xlsx"])
-        self.assertNotIn("大慌张背礁石", client.calls[0][2])
+        self.assertIn("66", response["answer"])
+        self.assertEqual(client.calls, [])
         self.assertEqual(service.store.last_top_k, 16)
+
+    def test_catalog_sequence_matches_title_and_date_deterministically(self) -> None:
+        rows = SearchResult(
+            "xlsx",
+            "公共服务信息等.xlsx.md",
+            "工作表：文件清单",
+            "\n".join(
+                [
+                    "序号 | 名称",
+                    "65 | 长江干线宜昌至宜宾航段主要碍航礁石汇总表（2026 年 5 月）",
+                    "66 | 长江干线宜昌至宜宾航段主要碍航礁石汇总表（2026 年 6 月）",
+                ]
+            ),
+            0.72,
+        )
+        service, client = self.make_service([rows])
+
+        response = service.answer(
+            "公共服务信息目录中，2026年6月长江干线宜昌至宜宾航段主要碍航礁石汇总表的序号是多少？"
+        )
+
+        self.assertIn("序号是 66", response["answer"])
+        self.assertIn("[S1]", response["answer"])
+        self.assertEqual(client.calls, [])
+
+    def test_short_annual_plan_question_filters_monthly_and_other_years(self) -> None:
+        monthly = SearchResult(
+            "monthly",
+            "2026年6月份长江干线航道维护尺度.pdf.md",
+            "第 1 页",
+            "宜宾合江门至重庆胡家滩新港 3.5米",
+            0.8,
+        )
+        old_annual = SearchResult(
+            "old",
+            "2023年度长江干线主航道养护尺度计划表.pdf.md",
+            "第 1 页",
+            "宜宾合江门至重庆胡家滩新港 3.2米",
+            0.75,
+        )
+        annual = SearchResult(
+            "annual",
+            "2026年度长江干线主航道养护尺度计划表.pdf.md",
+            "第 1 页",
+            "1月至12月：2.9 2.9 2.9 2.9 3.2 3.5 3.7 3.7 3.7 3.5 3.2 2.9",
+            0.7,
+        )
+        service, client = self.make_service([monthly, old_annual, annual])
+
+        response = service.answer(
+            "2026年度计划中，宜宾合江门至重庆胡家滩新港7月份的维护水深是多少？"
+        )
+
+        self.assertTrue(is_annual_plan_question("2026年度计划中，7月份维护水深是多少？"))
+        self.assertEqual([source["chunk_id"] for source in response["sources"]], ["annual"])
+        self.assertNotIn("2023年度", client.calls[0][2])
 
     def test_legal_effective_date_prefers_body_clause_over_directory(self) -> None:
         directory = SearchResult(

@@ -28,10 +28,14 @@ _DESIGN_WORDS = re.compile(
 )
 _CATALOG_WORDS = re.compile(r"目录|清单")
 _CATALOG_FIELD_WORDS = re.compile(r"序号|文件名|文件名称|名称")
+_CATALOG_SEQUENCE_QUESTION = re.compile(r"(?:的|对应的?)序号(?:是|为)?多少|序号(?:是|为)多少")
+_CATALOG_ROW = re.compile(r"(?m)^\s*(\d+)\s*\|\s*(.+?)\s*$")
 _LEGAL_EFFECTIVE_WORDS = re.compile(r"施行|实施|生效")
 _LEGAL_BODY_EFFECTIVE = re.compile(r"(?:本法|本条例|本规定).{0,80}?(?:施行|实施)", re.S)
 _SEQUENCE_NUMBER = re.compile(r"序号\s*(\d+)")
 _YEAR = re.compile(r"20\d{2}")
+_MONTH = re.compile(r"(?<!\d)(1[0-2]|[1-9])月")
+_ANNUAL_PLAN_WORDS = re.compile(r"年度.{0,12}计划")
 _SOURCE_FAMILIES = (
     "航道公共服务信息",
     "航道维护尺度",
@@ -70,6 +74,10 @@ def source_family(question: str) -> Optional[str]:
     return next((term for term in _SOURCE_FAMILIES if term in compact_question), None)
 
 
+def is_annual_plan_question(question: str) -> bool:
+    return bool(_ANNUAL_PLAN_WORDS.search(_compact(question)))
+
+
 def is_legal_effective_date_question(question: str) -> bool:
     return bool(
         _LEGAL_EFFECTIVE_WORDS.search(question)
@@ -100,6 +108,45 @@ def _balance_years(
     return selected
 
 
+def _catalog_sequence_answer(
+    question: str, results: List[SearchResult]
+) -> Optional[str]:
+    """Answer unambiguous catalog name-to-sequence lookups without an LLM.
+
+    Small generative models can overlook a row near the end of a long spreadsheet
+    chunk even when retrieval is correct.  The catalog format is already
+    structured, so exact base-title and date matching is safer and reproducible.
+    """
+    if not _CATALOG_SEQUENCE_QUESTION.search(question):
+        return None
+
+    compact_question = _compact(question)
+    question_years = set(_YEAR.findall(compact_question))
+    question_months = set(_MONTH.findall(compact_question))
+    matches = []
+    for source_number, result in enumerate(results, start=1):
+        for sequence, name in _CATALOG_ROW.findall(result.text):
+            compact_name = _compact(name)
+            base_name = re.sub(r"[（(][^）)]*[）)]", "", compact_name)
+            if not base_name or base_name not in compact_question:
+                continue
+
+            name_years = set(_YEAR.findall(compact_name))
+            name_months = set(_MONTH.findall(compact_name))
+            if name_years and question_years and not name_years.issubset(question_years):
+                continue
+            if name_months and question_months and not name_months.issubset(question_months):
+                continue
+            date_matches = len(name_years & question_years) + len(name_months & question_months)
+            matches.append((date_matches, len(base_name), source_number, sequence, name.strip()))
+
+    if not matches:
+        return None
+    matches.sort(reverse=True)
+    _, _, source_number, sequence, name = matches[0]
+    return f"根据目录，{name}的序号是 {sequence} [S{source_number}]。"
+
+
 class RAGService:
     def __init__(self, settings: Settings, client: OllamaClient, store: VectorStore) -> None:
         self.settings = settings
@@ -121,9 +168,16 @@ class RAGService:
         result_limit = top_k or self.settings.rag_top_k
         catalog_lookup = is_catalog_lookup(question)
         family = source_family(question)
+        annual_plan = is_annual_plan_question(question)
         legal_effective = is_legal_effective_date_question(question)
         sequence_lookup = bool(_SEQUENCE_NUMBER.search(question))
-        routed_lookup = catalog_lookup or family is not None or legal_effective or sequence_lookup
+        routed_lookup = (
+            catalog_lookup
+            or family is not None
+            or annual_plan
+            or legal_effective
+            or sequence_lookup
+        )
         candidate_limit = max(result_limit, 16) if routed_lookup else result_limit
         results = self.store.search(question, candidate_limit)
         strong_chunk_ids = set()
@@ -152,6 +206,23 @@ class RAGService:
                     balanced = _balance_years(years, results, result_limit)
                     if balanced:
                         results = balanced
+
+            if annual_plan:
+                annual_results = [
+                    result
+                    for result in results
+                    if "年度" in _compact(result.source) and "计划" in _compact(result.source)
+                ]
+                if annual_results:
+                    results = annual_results
+
+                years = list(dict.fromkeys(_YEAR.findall(question)))
+                if len(years) == 1:
+                    year_results = [
+                        result for result in results if years[0] in _compact(result.source)
+                    ]
+                    if year_results:
+                        results = year_results
 
             if legal_effective:
                 body_results = [
@@ -198,8 +269,10 @@ class RAGService:
                 "blocked_realtime": False,
             }
 
-        evidence = self._format_evidence(results)
-        user_prompt = f"""用户问题：
+        structured_answer = _catalog_sequence_answer(question, results)
+        if structured_answer is None:
+            evidence = self._format_evidence(results)
+            user_prompt = f"""用户问题：
 {question}
 
 检索证据：
@@ -208,12 +281,16 @@ class RAGService:
 请严格依据上述证据回答。若证据没有直接支持问题中的关键信息，必须说明无法确认。
 不得补充证据中没有明确出现的背景、原因、风险、建议或常识。
 读取表格时必须按问题指定的行和列定位；若同时出现历史均值与预测均值，必须明确区分。"""
-        answer = self.client.chat(
-            self.settings.chat_model,
-            SYSTEM_PROMPT,
-            user_prompt,
-            self.settings.num_ctx,
-        )
+            answer = self.client.chat(
+                self.settings.chat_model,
+                SYSTEM_PROMPT,
+                user_prompt,
+                self.settings.num_ctx,
+                self.settings.generation_temperature,
+                self.settings.generation_seed,
+            )
+        else:
+            answer = structured_answer
         sources: List[Dict] = []
         for number, result in enumerate(results, start=1):
             source = asdict(result)

@@ -44,7 +44,15 @@ class OllamaClient:
             raise OllamaError("Ollama 未返回预期数量的向量。")
         return embeddings
 
-    def chat(self, model: str, system_prompt: str, user_prompt: str, num_ctx: int) -> str:
+    def chat(
+        self,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        num_ctx: int,
+        temperature: float = 0,
+        seed: int = 42,
+    ) -> str:
         result = self._post(
             "/api/chat",
             {
@@ -57,7 +65,8 @@ class OllamaClient:
                 ],
                 "options": {
                     "num_ctx": num_ctx,
-                    "temperature": 0.1,
+                    "temperature": temperature,
+                    "seed": seed,
                     "num_predict": 600,
                 },
             },

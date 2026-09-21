@@ -37,7 +37,7 @@
 - 实验室双 RTX 5090 服务器已经部署 `qwen3.5:9b` 和 `qwen3-embedding:0.6b`。
 - 28 份代表性资料已生成 541 个索引片段。
 - 由 `initial-20.jsonl` 与 `expanded-30.jsonl` 组成的 50 题评测集通过 50 题，失败 0 题。
-- 当前 49 项单元测试全部通过。
+- 当前 53 项单元测试全部通过。
 - 平均完整响应时间约 0.98 秒，中位数约 0.92 秒，最大约 4.38 秒；该结果仅代表单用户、当前样本和当前服务器，不是生产并发指标。
 - 已验证法规、标准、历史公共服务信息、PDF 表格、XLSX 目录、跨文档比较、无答案拒答和实时问题拦截。
 
@@ -110,6 +110,15 @@ python -m scripts.preprocess "profile/已确认的首批样本目录"
 命令会将可提取内容写入 `data/processed/`，并将文件标记为 `ready`、
 `needs_ocr`、`partial_needs_ocr`、`partial_needs_image_ocr`、`needs_conversion`
 或 `unsupported`。
+
+2026-09-21 已对当前 287 份候选资料完成一次不执行 OCR 的全量逐页预处理：208 份可直接
+标准化，71 份扫描 PDF 和 8 份混合 PDF 进入 OCR 队列。17 份旧版 DOC 已通过 macOS
+`textutil` 转换；无扩展名文件已按 PDF 识别；51 份 DOCX 中完全相同且经人工核验的 74×74
+国徽小图，依据内容校验值记录为装饰图片而不送入 OCR。未知小图片不会因尺寸被自动忽略。
+正式 OCR 和最终入库尚未执行，当前索引没有被替换。
+
+全量构建器会额外生成 `ocr-queue.jsonl`（按 1～3 页小样本优先排序）和
+`duplicate-groups.jsonl`（相同 SHA-256 对应的全部文件名），便于小批量 OCR 与人工去重。
 
 需要实际执行 OCR 时，使用独立的 Python 3.12 环境。轻量后端适合本机功能验证：
 

@@ -66,6 +66,67 @@ class KnowledgeBuilderTests(unittest.TestCase):
                 build_knowledge_base._can_resume_ready(record, audit, "paddleocr-vl")
             )
 
+    def test_checkpoint_writes_sorted_ocr_queue_and_duplicate_source_mapping(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            manifests = Path(directory)
+            records = []
+            for source, pages, checksum, status in (
+                ("大扫描.pdf", 20, "same", "needs_ocr"),
+                ("小扫描.pdf", 2, "other", "needs_ocr"),
+                ("重复件.pdf", 20, "same", "partial_needs_ocr"),
+            ):
+                records.append(
+                    {
+                        "pipeline_version": build_knowledge_base.PIPELINE_VERSION,
+                        "source": source,
+                        "source_path": f"/raw/{source}",
+                        "size_bytes": pages * 100,
+                        "mtime_ns": 1,
+                        "sha256": checksum,
+                        "ocr_backend": "none",
+                        "audit_options": {},
+                        "updated_at": "now",
+                        "audit": DocumentAudit(
+                            source=source,
+                            suffix=".pdf",
+                            size_bytes=pages * 100,
+                            sha256=checksum,
+                            classification="scan",
+                            supported=True,
+                            page_count=pages,
+                            sampled_pages=pages,
+                            text_pages=0,
+                            low_text_pages=pages,
+                            extracted_characters=0,
+                        ).as_dict(),
+                        "result": {
+                            "source": source,
+                            "status": status,
+                            "parser": "none",
+                            "output": None,
+                            "parts": 0,
+                            "text_characters": 0,
+                            "warnings": [],
+                        },
+                        "output_path": None,
+                    }
+                )
+
+            build_knowledge_base._checkpoint(manifests, records)
+
+            queue = [
+                json.loads(line)
+                for line in (manifests / "ocr-queue.jsonl").read_text().splitlines()
+            ]
+            duplicates = [
+                json.loads(line)
+                for line in (manifests / "duplicate-groups.jsonl").read_text().splitlines()
+            ]
+            self.assertEqual(queue[0]["source"], "小扫描.pdf")
+            self.assertTrue(queue[0]["recommended_for_pilot"])
+            self.assertEqual(duplicates[0]["count"], 2)
+            self.assertEqual(duplicates[0]["sources"], ["大扫描.pdf", "重复件.pdf"])
+
     def test_index_is_backed_up_and_replaced_only_after_success(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

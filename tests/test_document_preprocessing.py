@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import unittest
@@ -15,6 +16,7 @@ from app.document_preprocessing import (
     classify_pdf_page_lengths,
     discover_documents,
     extract_docx_image_parts,
+    inspect_docx_images,
     output_path_for,
     parts_to_markdown,
     preprocess_document,
@@ -40,6 +42,48 @@ class PDFClassificationTests(unittest.TestCase):
 
 
 class AuditTests(unittest.TestCase):
+    def test_detects_pdf_without_filename_extension(self) -> None:
+        from pypdf import PdfWriter
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "无扩展名资料"
+            writer = PdfWriter()
+            writer.add_blank_page(width=100, height=100)
+            with source.open("wb") as stream:
+                writer.write(stream)
+
+            audit = audit_document(source, pdf_page_limit=0)
+
+            self.assertEqual(audit.suffix, ".pdf")
+            self.assertEqual(audit.classification, "scan")
+            self.assertTrue(audit.supported)
+
+    def test_small_png_icon_is_recorded_as_decorative(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "含国徽资料.docx"
+            png_header = (
+                b"\x89PNG\r\n\x1a\n"
+                + (13).to_bytes(4, "big")
+                + b"IHDR"
+                + (74).to_bytes(4, "big")
+                + (74).to_bytes(4, "big")
+                + b"\x08\x06\x00\x00\x00"
+            )
+            with ZipFile(source, "w") as archive:
+                archive.writestr("word/media/image1.png", png_header)
+
+            with patch(
+                "app.document_preprocessing.VERIFIED_DECORATIVE_IMAGE_SHA256",
+                {hashlib.sha256(png_header).hexdigest()},
+            ):
+                audit = audit_document(source)
+                image_counts = inspect_docx_images(source)
+
+            self.assertEqual(image_counts, (1, 0, 1))
+            self.assertEqual(audit.embedded_images, 1)
+            self.assertEqual(audit.ocr_candidate_images, 0)
+            self.assertEqual(audit.decorative_images, 1)
+
     def test_discovers_files_and_ignores_hidden_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -87,6 +131,28 @@ class AuditTests(unittest.TestCase):
 
 
 class PreprocessTests(unittest.TestCase):
+    def test_legacy_converter_supports_macos_textutil(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "旧资料.doc"
+            output = root / "converted"
+            source.write_bytes(b"legacy")
+            converter = LegacyDocConverter(executable="/usr/bin/textutil")
+
+            def fake_run(command, **kwargs):
+                Path(command[4]).write_bytes(b"converted")
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with patch(
+                "app.document_preprocessing.subprocess.run",
+                side_effect=fake_run,
+            ) as run:
+                converted = converter.convert_to_docx(source, output)
+
+            self.assertEqual(converter.name, "textutil")
+            self.assertTrue(converted.exists())
+            self.assertEqual(run.call_args.args[0][1:4], ["-convert", "docx", "-output"])
+
     def test_markdown_preserves_source_and_locator(self) -> None:
         markdown = parts_to_markdown(
             "资料/标准.docx",

@@ -28,8 +28,13 @@ from app.ollama_client import OllamaClient, OllamaError
 from app.vector_store import VectorStore
 
 
-PIPELINE_VERSION = 1
+PIPELINE_VERSION = 3
 PARTIAL_INDEXABLE_STATUSES = {
+    "partial_needs_image_ocr",
+    "partial_needs_ocr",
+}
+OCR_QUEUE_STATUSES = {
+    "needs_ocr",
     "partial_needs_image_ocr",
     "partial_needs_ocr",
 }
@@ -194,7 +199,8 @@ def _can_reuse_audit(
         return False
     stat = source.stat()
     return (
-        record.get("size_bytes") == stat.st_size
+        record.get("pipeline_version") == PIPELINE_VERSION
+        and record.get("size_bytes") == stat.st_size
         and record.get("mtime_ns") == stat.st_mtime_ns
         and record.get("audit_options")
         == {
@@ -254,6 +260,61 @@ def _checkpoint(manifest_dir: Path, records: Sequence[Dict[str, Any]]) -> None:
             for record in records
         ),
     )
+    write_jsonl(manifest_dir / "ocr-queue.jsonl", _ocr_queue_rows(records))
+    write_jsonl(manifest_dir / "duplicate-groups.jsonl", _duplicate_groups(records))
+
+
+def _ocr_queue_rows(records: Sequence[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    rows = []
+    for record in records:
+        result = record.get("result", {})
+        status = result.get("status")
+        if status not in OCR_QUEUE_STATUSES:
+            continue
+        audit = record.get("audit", {})
+        page_count = audit.get("page_count")
+        rows.append(
+            {
+                "source": record.get("source"),
+                "source_path": record.get("source_path"),
+                "status": status,
+                "classification": audit.get("classification"),
+                "page_count": page_count,
+                "text_pages": audit.get("text_pages"),
+                "low_text_pages": audit.get("low_text_pages"),
+                "size_bytes": record.get("size_bytes"),
+                "sha256": record.get("sha256"),
+                "recommended_for_pilot": isinstance(page_count, int)
+                and 1 <= page_count <= 3,
+            }
+        )
+    return sorted(
+        rows,
+        key=lambda row: (
+            not row["recommended_for_pilot"],
+            row["page_count"] if isinstance(row["page_count"], int) else float("inf"),
+            row["size_bytes"] if isinstance(row["size_bytes"], int) else float("inf"),
+            row["source"] or "",
+        ),
+    )
+
+
+def _duplicate_groups(records: Sequence[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    sources_by_checksum: Dict[str, list[str]] = {}
+    for record in records:
+        checksum = record.get("sha256")
+        source = record.get("source")
+        if checksum and source:
+            sources_by_checksum.setdefault(checksum, []).append(source)
+    return [
+        {
+            "sha256": checksum,
+            "count": len(sources),
+            "sources": sorted(sources),
+        }
+        for checksum, sources in sorted(sources_by_checksum.items())
+        if len(sources) > 1
+    ]
 
 
 def preprocess_all(
@@ -469,10 +530,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         for record in records
         if record["result"]["status"] != "ready"
     ]
-    checksum_counts = Counter(record["sha256"] for record in records if record["sha256"])
-    duplicate_checksums = sorted(
-        checksum for checksum, count in checksum_counts.items() if count > 1
-    )
+    ocr_queue = _ocr_queue_rows(records)
+    duplicate_groups = _duplicate_groups(records)
+    duplicate_checksums = [group["sha256"] for group in duplicate_groups]
 
     summary: Dict[str, Any] = {
         "started_at": started_at,
@@ -483,7 +543,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "statuses": dict(sorted(statuses.items())),
         "activity": activity,
         "incomplete_documents": incomplete,
+        "ocr_queue_count": len(ocr_queue),
+        "ocr_pilot_candidates": sum(
+            bool(record["recommended_for_pilot"]) for record in ocr_queue
+        ),
         "duplicate_checksums": duplicate_checksums,
+        "duplicate_group_count": len(duplicate_groups),
+        "duplicate_document_count": sum(
+            int(group["count"]) for group in duplicate_groups
+        ),
         "ocr_backend": args.ocr_backend,
         "index_replaced": False,
     }

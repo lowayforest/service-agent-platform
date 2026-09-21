@@ -18,6 +18,10 @@ from app.document_loader import DocumentPart, load_document
 AUDITABLE_SUFFIXES = {".doc", ".docx", ".md", ".pdf", ".txt", ".xlsx"}
 NATIVE_SUFFIXES = {".docx", ".md", ".pdf", ".txt", ".xlsx"}
 OCR_IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
+VERIFIED_DECORATIVE_IMAGE_SHA256 = {
+    # 当前资料中人工核验过的 74×74 国徽；其他小图仍保守地进入 OCR/人工检查。
+    "f8b6a7dc1a7f23bab937fbc556ed4fa7cb63fd26724632b28a62db582a1552e0",
+}
 
 
 @dataclass(frozen=True)
@@ -34,6 +38,8 @@ class DocumentAudit:
     low_text_pages: Optional[int] = None
     extracted_characters: Optional[int] = None
     embedded_images: Optional[int] = None
+    ocr_candidate_images: Optional[int] = None
+    decorative_images: Optional[int] = None
     error: Optional[str] = None
 
     def as_dict(self) -> dict:
@@ -134,15 +140,57 @@ def _audit_pdf(
     }
 
 
-def count_docx_images(path: Path) -> int:
+def _png_dimensions(data: bytes) -> Optional[tuple[int, int]]:
+    if len(data) < 24 or not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return None
+    return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+
+
+def is_likely_decorative_image(name: str, data: bytes) -> bool:
+    """Skip only small images whose content hash was explicitly reviewed."""
+    suffix = Path(name).suffix.lower()
+    if suffix != ".png" or len(data) > 32 * 1024:
+        return False
+    dimensions = _png_dimensions(data)
+    return bool(
+        dimensions
+        and dimensions[0] <= 128
+        and dimensions[1] <= 128
+        and hashlib.sha256(data).hexdigest() in VERIFIED_DECORATIVE_IMAGE_SHA256
+    )
+
+
+def inspect_docx_images(path: Path) -> tuple[int, int, int]:
     try:
         with ZipFile(path) as archive:
-            return sum(
-                name.startswith("word/media/") and not name.endswith("/")
+            image_names = [
+                name
                 for name in archive.namelist()
+                if name.startswith("word/media/") and not name.endswith("/")
+            ]
+            decorative = sum(
+                is_likely_decorative_image(name, archive.read(name)) for name in image_names
             )
+            return len(image_names), len(image_names) - decorative, decorative
     except (BadZipFile, OSError):
-        return 0
+        return 0, 0, 0
+
+
+def count_docx_images(path: Path) -> int:
+    return inspect_docx_images(path)[0]
+
+
+def _effective_suffix(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix:
+        return suffix
+    try:
+        with path.open("rb") as stream:
+            if stream.read(5) == b"%PDF-":
+                return ".pdf"
+    except OSError:
+        pass
+    return ""
 
 
 def audit_document(
@@ -152,7 +200,7 @@ def audit_document(
     pdf_page_limit: int = 5,
     minimum_text_characters: int = 30,
 ) -> DocumentAudit:
-    suffix = path.suffix.lower()
+    suffix = _effective_suffix(path)
     common = {
         "source": display_path(path, base),
         "suffix": suffix or "[no extension]",
@@ -171,11 +219,13 @@ def audit_document(
                 classification="legacy_doc", supported=False, **common
             )
         if suffix == ".docx":
-            image_count = count_docx_images(path)
+            image_count, ocr_candidates, decorative = inspect_docx_images(path)
             return DocumentAudit(
                 classification="docx_with_images" if image_count else "native_text",
                 supported=True,
                 embedded_images=image_count,
+                ocr_candidate_images=ocr_candidates,
+                decorative_images=decorative,
                 **common,
             )
         if suffix in NATIVE_SUFFIXES:
@@ -221,8 +271,16 @@ class LegacyDocConverter:
         self.executable = (
             executable
             if executable is not None
-            else shutil.which("soffice") or shutil.which("libreoffice")
+            else shutil.which("soffice")
+            or shutil.which("libreoffice")
+            or shutil.which("textutil")
         )
+
+    @property
+    def name(self) -> str:
+        if self.executable and Path(self.executable).name == "textutil":
+            return "textutil"
+        return "libreoffice"
 
     @property
     def available(self) -> bool:
@@ -230,10 +288,20 @@ class LegacyDocConverter:
 
     def convert_to_docx(self, source: Path, output_dir: Path) -> Path:
         if not self.executable:
-            raise RuntimeError("未找到 LibreOffice/soffice，无法转换旧版 .doc 文件。")
+            raise RuntimeError("未找到 LibreOffice/soffice 或 macOS textutil，无法转换旧版 .doc 文件。")
         output_dir.mkdir(parents=True, exist_ok=True)
-        process = subprocess.run(
-            [
+        converted = output_dir / f"{source.stem}.docx"
+        if self.name == "textutil":
+            command = [
+                self.executable,
+                "-convert",
+                "docx",
+                "-output",
+                str(converted),
+                str(source),
+            ]
+        else:
+            command = [
                 self.executable,
                 "--headless",
                 "--convert-to",
@@ -241,13 +309,14 @@ class LegacyDocConverter:
                 "--outdir",
                 str(output_dir),
                 str(source),
-            ],
+            ]
+        process = subprocess.run(
+            command,
             check=False,
             capture_output=True,
             text=True,
             timeout=300,
         )
-        converted = output_dir / f"{source.stem}.docx"
         if process.returncode != 0 or not converted.exists():
             detail = (process.stderr or process.stdout).strip()
             raise RuntimeError(f"DOC 转换失败：{detail or '未生成 DOCX 文件'}")
@@ -294,13 +363,16 @@ def extract_docx_image_parts(
         )
         for image_number, image_name in enumerate(image_names, start=1):
             suffix = Path(image_name).suffix.lower()
+            image_data = archive.read(image_name)
+            if is_likely_decorative_image(image_name, image_data):
+                continue
             if suffix not in OCR_IMAGE_SUFFIXES:
                 warnings.append(
                     f"内嵌图片 {image_number} 的格式 {suffix or '未知'} 暂不支持 OCR。"
                 )
                 continue
             image_path = Path(temporary) / f"image-{image_number}{suffix}"
-            image_path.write_bytes(archive.read(image_name))
+            image_path.write_bytes(image_data)
             try:
                 image_parts = ocr_backend.extract(image_path)
             except Exception as exc:
@@ -333,6 +405,7 @@ def preprocess_document(
     warnings: List[str] = []
     parser = "native"
     parts: List[DocumentPart] = []
+    effective_suffix = record.suffix if record.suffix.startswith(".") else source.suffix.lower()
 
     if record.classification in {"unsupported", "error"}:
         return PreprocessResult(
@@ -347,7 +420,7 @@ def preprocess_document(
 
     try:
         path_to_load = source
-        if source.suffix.lower() == ".doc":
+        if effective_suffix == ".doc":
             active_converter = converter or LegacyDocConverter()
             if not active_converter.available:
                 return PreprocessResult(
@@ -362,8 +435,8 @@ def preprocess_document(
             with tempfile.TemporaryDirectory(prefix="service-agent-doc-") as temporary:
                 path_to_load = active_converter.convert_to_docx(source, Path(temporary))
                 parts = load_document(path_to_load)
-            parser = "libreoffice+python-docx"
-        elif source.suffix.lower() == ".pdf" and record.classification in {"scan", "mixed"}:
+            parser = f"{active_converter.name}+python-docx"
+        elif effective_suffix == ".pdf" and record.classification in {"scan", "mixed"}:
             if ocr_backend is not None:
                 parts = ocr_backend.extract(source)
                 parser = ocr_backend.name
@@ -381,17 +454,17 @@ def preprocess_document(
                             "个低文本页面，需要 OCR。"
                         ],
                     )
-                parts = load_document(source)
+                parts = load_document(source, suffix_override=effective_suffix)
                 warnings.append(
                     f"检测到 {record.low_text_pages or 0}/{record.sampled_pages or 0} 个低文本页面，需要 OCR。"
                 )
         else:
-            parts = load_document(path_to_load)
+            parts = load_document(path_to_load, suffix_override=effective_suffix)
             parser = {
                 ".docx": "python-docx",
                 ".pdf": "pypdf",
                 ".xlsx": "openpyxl",
-            }.get(source.suffix.lower(), "text")
+            }.get(effective_suffix, "text")
     except Exception as exc:
         return PreprocessResult(
             source=record.source,
@@ -403,9 +476,12 @@ def preprocess_document(
             warnings=[str(exc)],
         )
 
-    if record.embedded_images:
+    ocr_candidate_images = record.ocr_candidate_images
+    if ocr_candidate_images is None:
+        ocr_candidate_images = record.embedded_images or 0
+    if ocr_candidate_images:
         if ocr_backend is None:
-            warnings.append(f"DOCX 包含 {record.embedded_images} 个内嵌图片，图片文字尚需 OCR。")
+            warnings.append(f"DOCX 包含 {ocr_candidate_images} 个候选业务图片，图片文字尚需 OCR。")
         else:
             try:
                 image_parts, image_warnings = extract_docx_image_parts(source, ocr_backend)

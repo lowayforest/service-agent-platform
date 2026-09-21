@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable, List, Optional
 
 
 SUPPORTED_SUFFIXES = {".md", ".txt", ".pdf", ".docx", ".xlsx"}
@@ -42,8 +42,8 @@ def iter_supported_files(inputs: Iterable[Path]) -> List[Path]:
     return sorted(set(files))
 
 
-def load_document(path: Path) -> List[DocumentPart]:
-    suffix = path.suffix.lower()
+def load_document(path: Path, suffix_override: Optional[str] = None) -> List[DocumentPart]:
+    suffix = (suffix_override or path.suffix).lower()
     if suffix == ".md":
         return _load_markdown(path)
     if suffix == ".txt":

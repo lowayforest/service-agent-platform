@@ -6,8 +6,9 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from app.client_factory import create_chat_client, create_embedding_client
 from app.config import settings
-from app.ollama_client import OllamaClient, OllamaError
+from app.model_protocols import ModelServiceError
 from app.rag_service import RAGService
 from app.vector_store import VectorStore
 
@@ -32,9 +33,15 @@ class ChatResponse(BaseModel):
     blocked_realtime: bool
 
 
-client = OllamaClient(settings.ollama_base_url, settings.request_timeout)
-store = VectorStore(settings.index_path, settings.embedding_model, client)
-service = RAGService(settings, client, store)
+chat_client = create_chat_client(settings)
+embedding_client = create_embedding_client(settings)
+store = VectorStore(
+    settings.index_path,
+    settings.embedding_model,
+    embedding_client,
+    embedding_backend=settings.embedding_backend,
+)
+service = RAGService(settings, chat_client, store)
 
 app = FastAPI(
     title="航道对外服务智能体 API",
@@ -48,7 +55,9 @@ def health() -> dict:
     store.reload_if_changed()
     return {
         "status": "ok",
+        "chat_backend": settings.chat_backend,
         "chat_model": settings.chat_model,
+        "embedding_backend": settings.embedding_backend,
         "embedding_model": settings.embedding_model,
         "indexed_chunks": store.chunk_count,
     }
@@ -58,7 +67,7 @@ def health() -> dict:
 async def chat(request: ChatRequest) -> dict:
     try:
         return await run_in_threadpool(service.answer, request.question.strip(), request.top_k)
-    except OllamaError as exc:
+    except ModelServiceError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

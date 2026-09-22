@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from app.document_loader import DocumentPart
 from app.document_preprocessing import DocumentAudit, sha256_file
-from app.ollama_client import OllamaError
+from app.model_protocols import ModelServiceError
 from scripts import build_knowledge_base
 
 
@@ -32,7 +32,7 @@ class FakeEmbeddingClient:
 
 class FailingEmbeddingClient:
     def embed(self, model: str, texts: list[str]) -> list[list[float]]:
-        raise OllamaError("模拟向量化失败")
+        raise ModelServiceError("模拟向量化失败")
 
 
 class KnowledgeBuilderTests(unittest.TestCase):
@@ -137,7 +137,7 @@ class KnowledgeBuilderTests(unittest.TestCase):
 
             with patch.object(
                 build_knowledge_base,
-                "OllamaClient",
+                "create_embedding_client",
                 return_value=FakeEmbeddingClient(),
             ):
                 chunks, backup = build_knowledge_base.build_index_atomically(
@@ -164,10 +164,10 @@ class KnowledgeBuilderTests(unittest.TestCase):
 
             with patch.object(
                 build_knowledge_base,
-                "OllamaClient",
+                "create_embedding_client",
                 return_value=FailingEmbeddingClient(),
             ):
-                with self.assertRaisesRegex(OllamaError, "模拟向量化失败"):
+                with self.assertRaisesRegex(ModelServiceError, "模拟向量化失败"):
                     build_knowledge_base.build_index_atomically(
                         [document],
                         index,

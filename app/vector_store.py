@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set
 
 from app.chunking import TextChunk
-from app.ollama_client import OllamaClient
+from app.model_protocols import EmbeddingClient
 
 
 @dataclass(frozen=True)
@@ -56,10 +56,13 @@ class VectorStore:
         self,
         index_path: Path,
         embedding_model: str,
-        client: OllamaClient,
+        client: EmbeddingClient,
+        *,
+        embedding_backend: str = "ollama",
     ) -> None:
         self.index_path = index_path
         self.embedding_model = embedding_model
+        self.embedding_backend = embedding_backend.strip().lower()
         self.client = client
         self._chunks: List[Dict] = []
         self._mtime: Optional[float] = None
@@ -79,6 +82,17 @@ class VectorStore:
         if model != self.embedding_model:
             raise ValueError(
                 f"索引使用 {model!r}，当前配置使用 {self.embedding_model!r}。请重新构建索引或修改配置。"
+            )
+        stored_backend = payload.get("embedding_backend")
+        if stored_backend is None and self.embedding_backend != "ollama":
+            raise ValueError(
+                "索引未记录向量后端，不能确认它是否与当前 OpenAI 兼容向量服务一致。"
+                "请使用当前向量服务重新构建索引。"
+            )
+        if stored_backend is not None and stored_backend != self.embedding_backend:
+            raise ValueError(
+                f"索引使用向量后端 {stored_backend!r}，当前配置使用 "
+                f"{self.embedding_backend!r}。请重新构建索引或修改配置。"
             )
         self._chunks = payload.get("chunks", [])
         self._mtime = self.index_path.stat().st_mtime
@@ -100,7 +114,8 @@ class VectorStore:
                 indexed.append(item)
 
         payload = {
-            "version": 1,
+            "version": 2,
+            "embedding_backend": self.embedding_backend,
             "embedding_model": self.embedding_model,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "chunks": indexed,

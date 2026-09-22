@@ -6,9 +6,10 @@ from pathlib import Path
 from typing import List
 
 from app.chunking import TextChunk, chunk_parts
+from app.client_factory import create_embedding_client
 from app.config import settings
 from app.document_loader import iter_supported_files, load_document
-from app.ollama_client import OllamaClient, OllamaError
+from app.model_protocols import ModelServiceError
 from app.vector_store import VectorStore
 
 
@@ -44,11 +45,16 @@ def main() -> int:
         print("没有生成任何可索引文本。", file=sys.stderr)
         return 2
 
-    client = OllamaClient(settings.ollama_base_url, settings.request_timeout)
-    store = VectorStore(settings.index_path, settings.embedding_model, client)
+    client = create_embedding_client(settings)
+    store = VectorStore(
+        settings.index_path,
+        settings.embedding_model,
+        client,
+        embedding_backend=settings.embedding_backend,
+    )
     try:
         count = store.build(chunks, args.batch_size)
-    except (OllamaError, ValueError) as exc:
+    except (ModelServiceError, ValueError) as exc:
         print(f"构建索引失败：{exc}", file=sys.stderr)
         return 1
 

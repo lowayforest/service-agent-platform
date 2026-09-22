@@ -5,7 +5,7 @@ from dataclasses import asdict
 from typing import Dict, List, Optional
 
 from app.config import Settings
-from app.ollama_client import OllamaClient
+from app.model_protocols import ChatClient
 from app.vector_store import SearchResult, VectorStore
 
 
@@ -148,7 +148,7 @@ def _catalog_sequence_answer(
 
 
 class RAGService:
-    def __init__(self, settings: Settings, client: OllamaClient, store: VectorStore) -> None:
+    def __init__(self, settings: Settings, client: ChatClient, store: VectorStore) -> None:
         self.settings = settings
         self.client = client
         self.store = store
@@ -288,6 +288,7 @@ class RAGService:
                 self.settings.num_ctx,
                 self.settings.generation_temperature,
                 self.settings.generation_seed,
+                self.settings.generation_max_tokens,
             )
         else:
             answer = structured_answer

@@ -5,8 +5,10 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Sequence
 
+from app.model_protocols import ModelServiceError
 
-class OllamaError(RuntimeError):
+
+class OllamaError(ModelServiceError):
     """Raised when the local Ollama service cannot complete a request."""
 
 
@@ -52,6 +54,7 @@ class OllamaClient:
         num_ctx: int,
         temperature: float = 0,
         seed: int = 42,
+        max_tokens: int = 600,
     ) -> str:
         result = self._post(
             "/api/chat",
@@ -67,7 +70,7 @@ class OllamaClient:
                     "num_ctx": num_ctx,
                     "temperature": temperature,
                     "seed": seed,
-                    "num_predict": 600,
+                    "num_predict": max_tokens,
                 },
             },
         )

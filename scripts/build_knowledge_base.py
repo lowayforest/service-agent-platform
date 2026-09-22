@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Sequence
 
 from app.chunking import TextChunk, chunk_parts
+from app.client_factory import create_embedding_client
 from app.config import settings
 from app.document_loader import iter_supported_files, load_document
 from app.document_preprocessing import (
@@ -24,7 +25,7 @@ from app.document_preprocessing import (
     write_jsonl,
 )
 from app.ocr_backends import PaddleOCRTextBackend, PaddleOCRVLBackend
-from app.ollama_client import OllamaClient, OllamaError
+from app.model_protocols import ModelServiceError
 from app.vector_store import VectorStore
 
 
@@ -453,9 +454,14 @@ def build_index_atomically(
     index_path.parent.mkdir(parents=True, exist_ok=True)
     candidate = index_path.with_name(f".{index_path.name}.candidate-{os.getpid()}")
     backup: Optional[Path] = None
-    client = OllamaClient(settings.ollama_base_url, settings.request_timeout)
+    client = create_embedding_client(settings)
     try:
-        store = VectorStore(candidate, settings.embedding_model, client)
+        store = VectorStore(
+            candidate,
+            settings.embedding_model,
+            client,
+            embedding_backend=settings.embedding_backend,
+        )
         count = store.build(chunks, embedding_batch_size)
         if index_path.exists():
             backup_dir = index_path.parent / "backups"
@@ -572,7 +578,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 overlap=args.overlap,
                 embedding_batch_size=args.embedding_batch_size,
             )
-        except (OllamaError, RuntimeError, ValueError) as exc:
+        except (ModelServiceError, RuntimeError, ValueError) as exc:
             summary["index_error"] = str(exc)
             _write_json(args.manifest_dir / "summary.json", summary)
             print(f"构建索引失败，原索引保持不变：{exc}")

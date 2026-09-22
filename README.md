@@ -58,6 +58,7 @@ scripts/preprocess.py   # 标准化文本、DOC 转换和 OCR 路由
 scripts/build_knowledge_base.py # 可续跑的全量预处理与原子索引构建
 scripts/ingest.py       # 文档导入与索引构建命令
 scripts/evaluate.py     # 批量调用 API 并生成评测报告
+deploy/vllm/            # 双 5090 vLLM 启动、停止与冒烟检查脚本
 evals/                  # 可提交的公开评测集
 tests/                  # 分段、检索、边界和预处理测试
 data/manifests/         # 本地生成的文档审计台账，不提交 Git

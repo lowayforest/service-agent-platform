@@ -198,6 +198,10 @@ CUDA_VISIBLE_DEVICES=1 vllm serve Qwen/Qwen3-Embedding-0.6B \
 双 5090 跨 NUMA 且没有 NVLink。27B 的 TP=2 性能必须实测，不能把两卡理解成一块连续
 64 GB 显存。
 
+仓库已经提供 `deploy/vllm/` 脚本，将生成模型固定在 GPU 0、向量模型固定在 GPU 1，并
+提供统一冒烟检查。服务器拉取代码后按 [启动脚本说明](../deploy/vllm/README.md) 配置，避免
+每次手工复制长命令。
+
 ## 6. 目标 Atlas 服务器部署门槛
 
 ### 6.1 先采集，后安装

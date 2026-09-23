@@ -125,7 +125,127 @@ class KnowledgeBuilderTests(unittest.TestCase):
             self.assertEqual(queue[0]["source"], "小扫描.pdf")
             self.assertTrue(queue[0]["recommended_for_pilot"])
             self.assertEqual(duplicates[0]["count"], 2)
+            self.assertEqual(duplicates[0]["canonical_source"], "大扫描.pdf")
+            self.assertEqual(duplicates[0]["skipped_count"], 0)
+            self.assertEqual(duplicates[0]["skipped_sources"], [])
             self.assertEqual(duplicates[0]["sources"], ["大扫描.pdf", "重复件.pdf"])
+
+    def test_deduplicate_processes_one_copy_and_records_skipped_source(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            raw = root / "raw"
+            raw.mkdir()
+            canonical = raw / "01-标准文件.pdf"
+            duplicate = raw / "02-重复文件.pdf"
+            canonical.write_bytes(b"identical-pdf")
+            duplicate.write_bytes(b"identical-pdf")
+            output = root / "processed"
+            manifests = root / "manifests"
+            backend = FakeOCRBackend()
+
+            def fake_audit(path: Path, **_: object) -> DocumentAudit:
+                return DocumentAudit(
+                    source=path.name,
+                    suffix=".pdf",
+                    size_bytes=path.stat().st_size,
+                    sha256=sha256_file(path),
+                    classification="scan",
+                    supported=True,
+                    page_count=1,
+                    sampled_pages=1,
+                    text_pages=0,
+                    low_text_pages=1,
+                    extracted_characters=0,
+                )
+
+            with (
+                patch.object(build_knowledge_base, "audit_document", side_effect=fake_audit),
+                patch.object(
+                    build_knowledge_base,
+                    "PaddleOCRTextBackend",
+                    return_value=backend,
+                ),
+            ):
+                code = self.run_main(
+                    [
+                        str(raw),
+                        "--output-dir",
+                        str(output),
+                        "--manifest-dir",
+                        str(manifests),
+                        "--ocr-backend",
+                        "paddleocr",
+                        "--deduplicate",
+                        "--preprocess-only",
+                    ]
+                )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(backend.calls, 1)
+            self.assertTrue((output / "01-标准文件.pdf.md").is_file())
+            self.assertFalse((output / "02-重复文件.pdf.md").exists())
+
+            summary = json.loads((manifests / "summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["statuses"], {"duplicate_skipped": 1, "ready": 1})
+            self.assertTrue(summary["deduplication_enabled"])
+            self.assertEqual(summary["unique_document_count"], 1)
+            self.assertEqual(summary["duplicate_excess_count"], 1)
+            self.assertEqual(summary["duplicate_skipped_count"], 1)
+            self.assertEqual(summary["incomplete_documents"], [])
+
+            duplicate_groups = [
+                json.loads(line)
+                for line in (manifests / "duplicate-groups.jsonl").read_text().splitlines()
+            ]
+            self.assertEqual(duplicate_groups[0]["canonical_source"], canonical.name)
+            self.assertEqual(duplicate_groups[0]["skipped_sources"], [duplicate.name])
+
+            results = [
+                json.loads(line)
+                for line in (manifests / "preprocess-results.jsonl").read_text().splitlines()
+            ]
+            skipped = next(row for row in results if row["status"] == "duplicate_skipped")
+            self.assertEqual(skipped["duplicate_of"], canonical.name)
+
+    def test_deduplicate_excludes_ready_duplicate_from_index(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            raw = root / "raw"
+            raw.mkdir()
+            (raw / "01-标准文件.txt").write_text("第一条 航道资料", encoding="utf-8")
+            (raw / "02-重复文件.txt").write_text("第一条 航道资料", encoding="utf-8")
+            output = root / "processed"
+            manifests = root / "manifests"
+            index = root / "index.json"
+
+            with patch.object(
+                build_knowledge_base,
+                "create_embedding_client",
+                return_value=FakeEmbeddingClient(),
+            ):
+                code = self.run_main(
+                    [
+                        str(raw),
+                        "--output-dir",
+                        str(output),
+                        "--manifest-dir",
+                        str(manifests),
+                        "--index-path",
+                        str(index),
+                        "--deduplicate",
+                    ]
+                )
+
+            self.assertEqual(code, 0)
+            payload = json.loads(index.read_text(encoding="utf-8"))
+            self.assertTrue(payload["chunks"])
+            self.assertEqual(
+                {chunk["source"] for chunk in payload["chunks"]},
+                {"01-标准文件.txt.md"},
+            )
+            summary = json.loads((manifests / "summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["indexed_documents"], 1)
+            self.assertEqual(summary["duplicate_skipped_count"], 1)
 
     def test_index_is_backed_up_and_replaced_only_after_success(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

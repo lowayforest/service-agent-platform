@@ -116,14 +116,16 @@ python -m scripts.preprocess "profile/已确认的首批样本目录"
 `needs_ocr`、`partial_needs_ocr`、`partial_needs_image_ocr`、`needs_conversion`
 或 `unsupported`。
 
-2026-09-21 已对当前 287 份候选资料完成一次不执行 OCR 的全量逐页预处理：208 份可直接
+2026-09-23 已对当前 288 份候选资料完成一次不执行 OCR 的全量逐页预处理：209 份可直接
 标准化，71 份扫描 PDF 和 8 份混合 PDF 进入 OCR 队列。17 份旧版 DOC 已通过 macOS
 `textutil` 转换；无扩展名文件已按 PDF 识别；51 份 DOCX 中完全相同且经人工核验的 74×74
 国徽小图，依据内容校验值记录为装饰图片而不送入 OCR。未知小图片不会因尺寸被自动忽略。
-71 份扫描 PDF 和 8 份混合 PDF 的全量 OCR 及最终入库尚未执行，当前索引没有被替换。
+10 组共 22 份文件内容完全相同；启用安全去重后保留 10 份标准来源、跳过 12 份副本，实际
+待 OCR 文件由 79 份降为 68 份。全量 OCR 及最终入库尚未执行，当前索引没有被替换。
 
 全量构建器会额外生成 `ocr-queue.jsonl`（按 1～3 页小样本优先排序）和
-`duplicate-groups.jsonl`（相同 SHA-256 对应的全部文件名），便于小批量 OCR 与人工去重。
+`duplicate-groups.jsonl`（相同 SHA-256 对应的标准来源与跳过文件名）。正式批处理增加
+`--deduplicate` 后只跳过内容指纹完全相同的副本，不删除、移动或改名任何原始文件。
 
 需要实际执行 OCR 时，使用独立的 Python 3.12 环境。轻量后端适合本机功能验证：
 

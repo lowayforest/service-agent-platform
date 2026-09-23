@@ -30,6 +30,10 @@ from app.vector_store import VectorStore
 
 
 PIPELINE_VERSION = 3
+COMPLETED_STATUSES = {
+    "duplicate_skipped",
+    "ready",
+}
 PARTIAL_INDEXABLE_STATUSES = {
     "partial_needs_image_ocr",
     "partial_needs_ocr",
@@ -96,6 +100,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "--preprocess-only",
         action="store_true",
         help="只生成标准文件和台账，不构建或替换索引",
+    )
+    parser.add_argument(
+        "--deduplicate",
+        action="store_true",
+        help=(
+            "按 SHA-256 跳过内容完全相同的副本；保留排序后的第一份作为标准来源，"
+            "不删除或修改原始文件"
+        ),
     )
     parser.add_argument(
         "--allow-incomplete",
@@ -257,6 +269,7 @@ def _checkpoint(manifest_dir: Path, records: Sequence[Dict[str, Any]]) -> None:
                 "classification": record["audit"]["classification"],
                 "output_path": record.get("output_path"),
                 "ocr_backend": record["ocr_backend"],
+                "duplicate_of": record.get("duplicate_of"),
             }
             for record in records
         ),
@@ -301,21 +314,56 @@ def _ocr_queue_rows(records: Sequence[Dict[str, Any]]) -> list[Dict[str, Any]]:
 
 
 def _duplicate_groups(records: Sequence[Dict[str, Any]]) -> list[Dict[str, Any]]:
-    sources_by_checksum: Dict[str, list[str]] = {}
+    records_by_checksum: Dict[str, list[Dict[str, Any]]] = {}
     for record in records:
         checksum = record.get("sha256")
         source = record.get("source")
         if checksum and source:
-            sources_by_checksum.setdefault(checksum, []).append(source)
-    return [
-        {
-            "sha256": checksum,
-            "count": len(sources),
-            "sources": sorted(sources),
-        }
-        for checksum, sources in sorted(sources_by_checksum.items())
-        if len(sources) > 1
-    ]
+            records_by_checksum.setdefault(checksum, []).append(record)
+
+    groups = []
+    for checksum, group_records in sorted(records_by_checksum.items()):
+        if len(group_records) <= 1:
+            continue
+        ordered = sorted(group_records, key=lambda record: str(record["source"]))
+        sources = [str(record["source"]) for record in ordered]
+        skipped_sources = [
+            str(record["source"])
+            for record in ordered
+            if record.get("result", {}).get("status") == "duplicate_skipped"
+        ]
+        canonical_sources = [
+            str(record["source"])
+            for record in ordered
+            if record.get("result", {}).get("status") != "duplicate_skipped"
+        ]
+        groups.append(
+            {
+                "sha256": checksum,
+                "count": len(sources),
+                "canonical_source": (
+                    canonical_sources[0] if canonical_sources else sources[0]
+                ),
+                "skipped_count": len(skipped_sources),
+                "skipped_sources": skipped_sources,
+                "sources": sources,
+            }
+        )
+    return groups
+
+
+def _duplicate_result(source: str, canonical_source: str) -> Dict[str, Any]:
+    return {
+        "source": source,
+        "status": "duplicate_skipped",
+        "parser": "none",
+        "output": None,
+        "parts": 0,
+        "text_characters": 0,
+        "warnings": [
+            f"内容与 {canonical_source} 的 SHA-256 完全相同；仅跳过处理，原始文件保持不变。"
+        ],
+    }
 
 
 def preprocess_all(
@@ -334,6 +382,7 @@ def preprocess_all(
     converter = LegacyDocConverter()
     records: list[Dict[str, Any]] = []
     counters = Counter()
+    canonical_by_checksum: Dict[str, str] = {}
 
     for number, source in enumerate(files, start=1):
         source_name = display_path(source, source_root)
@@ -356,7 +405,19 @@ def preprocess_all(
             )
             counters["audited"] += 1
 
-        if _can_resume_ready(old, audit, args.ocr_backend):
+        canonical_source = (
+            canonical_by_checksum.get(audit.sha256) if audit.sha256 else None
+        )
+        duplicate_of = canonical_source if args.deduplicate and canonical_source else None
+        if args.deduplicate and audit.sha256 and canonical_source is None:
+            canonical_by_checksum[audit.sha256] = source_name
+
+        if duplicate_of:
+            result_payload = _duplicate_result(source_name, duplicate_of)
+            output_path = None
+            counters["duplicates_skipped"] += 1
+            action = "duplicate_skipped"
+        elif _can_resume_ready(old, audit, args.ocr_backend):
             result_payload = old["result"]
             output_path = old["output_path"]
             counters["resumed_ready"] += 1
@@ -393,6 +454,7 @@ def preprocess_all(
             "audit": audit.as_dict(),
             "result": result_payload,
             "output_path": output_path,
+            "duplicate_of": duplicate_of,
         }
         records.append(record)
         _checkpoint(args.manifest_dir, records)
@@ -534,7 +596,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     incomplete = [
         record["source"]
         for record in records
-        if record["result"]["status"] != "ready"
+        if record["result"]["status"] not in COMPLETED_STATUSES
     ]
     ocr_queue = _ocr_queue_rows(records)
     duplicate_groups = _duplicate_groups(records)
@@ -549,6 +611,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "statuses": dict(sorted(statuses.items())),
         "activity": activity,
         "incomplete_documents": incomplete,
+        "deduplication_enabled": args.deduplicate,
+        "unique_document_count": len(records)
+        - sum(int(group["count"]) - 1 for group in duplicate_groups),
         "ocr_queue_count": len(ocr_queue),
         "ocr_pilot_candidates": sum(
             bool(record["recommended_for_pilot"]) for record in ocr_queue
@@ -558,9 +623,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "duplicate_document_count": sum(
             int(group["count"]) for group in duplicate_groups
         ),
+        "duplicate_excess_count": sum(
+            int(group["count"]) - 1 for group in duplicate_groups
+        ),
+        "duplicate_skipped_count": sum(
+            int(group["skipped_count"]) for group in duplicate_groups
+        ),
         "ocr_backend": args.ocr_backend,
         "index_replaced": False,
     }
+
+    if args.deduplicate and summary["duplicate_skipped_count"]:
+        print(
+            f"已按 SHA-256 跳过 {summary['duplicate_skipped_count']} 份重复副本；"
+            "原始文件保持不变。"
+        )
 
     if incomplete and not args.allow_incomplete:
         print(

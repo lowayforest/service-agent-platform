@@ -5,6 +5,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # 只影响镜像构建步骤，使 npm 复用服务器已经验证可用的宿主机网络。
+      network: host
     image: service-agent-demo-frontend:local
     container_name: service-agent-demo-frontend
     restart: unless-stopped

@@ -6,10 +6,15 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm \
     npm ci \
+      --prefer-offline \
+      --no-audit \
+      --no-fund \
+      --maxsockets=1 \
       --fetch-retries=5 \
       --fetch-retry-factor=2 \
       --fetch-retry-mintimeout=10000 \
-      --fetch-retry-maxtimeout=120000
+      --fetch-retry-maxtimeout=120000 \
+      --fetch-timeout=600000
 
 COPY index.html tsconfig.json tsconfig.app.json tsconfig.node.json vite.config.ts eslint.config.js ./
 COPY src ./src

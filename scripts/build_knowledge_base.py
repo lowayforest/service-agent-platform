@@ -254,6 +254,18 @@ def _can_resume_ready(
     )
 
 
+def _preserved_ocr_backend(
+    record: Dict[str, Any], requested_backend: str
+) -> str:
+    recorded_backend = str(record.get("ocr_backend") or requested_backend)
+    parser = str(record.get("result", {}).get("parser", ""))
+    if recorded_backend == "none" and parser.startswith("paddleocr-vl-"):
+        return "paddleocr-vl"
+    if recorded_backend == "none" and parser.startswith("paddleocr-v5-"):
+        return "paddleocr"
+    return recorded_backend
+
+
 def _checkpoint(manifest_dir: Path, records: Sequence[Dict[str, Any]]) -> None:
     write_jsonl(manifest_dir / "build-state.jsonl", records)
     write_jsonl(
@@ -421,7 +433,7 @@ def preprocess_all(
         elif _can_resume_ready(old, audit, args.ocr_backend):
             result_payload = old["result"]
             output_path = old["output_path"]
-            record_ocr_backend = str(old.get("ocr_backend") or args.ocr_backend)
+            record_ocr_backend = _preserved_ocr_backend(old, args.ocr_backend)
             counters["resumed_ready"] += 1
             action = "resume"
         else:

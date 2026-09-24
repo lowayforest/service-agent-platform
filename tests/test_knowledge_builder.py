@@ -66,6 +66,17 @@ class KnowledgeBuilderTests(unittest.TestCase):
                 build_knowledge_base._can_resume_ready(record, audit, "paddleocr-vl")
             )
 
+    def test_recovers_ocr_backend_from_parser_after_old_index_build(self) -> None:
+        record = {
+            "ocr_backend": "none",
+            "result": {"parser": "paddleocr-vl-v1.6"},
+        }
+
+        self.assertEqual(
+            build_knowledge_base._preserved_ocr_backend(record, "none"),
+            "paddleocr-vl",
+        )
+
     def test_checkpoint_writes_sorted_ocr_queue_and_duplicate_source_mapping(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             manifests = Path(directory)

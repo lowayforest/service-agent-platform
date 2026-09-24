@@ -89,6 +89,32 @@ class OCRValidationTests(unittest.TestCase):
             self.assertEqual(record.confirmed_blank_pages, [2])
             self.assertEqual(record.html_tables, 1)
 
+    def test_full_builder_absolute_output_path_takes_precedence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "raw" / "sample.pdf"
+            output = root / "processed" / "分组" / "sample.pdf.md"
+            source.parent.mkdir(parents=True)
+            output.parent.mkdir(parents=True)
+            source.write_bytes(b"fake-pdf")
+            output.write_text("## 第 1 页（OCR）\n正文\n", encoding="utf-8")
+            manifest = {
+                "source": "分组/sample.pdf",
+                "status": "ready",
+                "parser": "paddleocr-vl-v1.6",
+                "output": "sample.pdf.md",
+                "output_path": str(output),
+                "text_characters": 2,
+                "warnings": [],
+            }
+
+            with patch("scripts.validate_ocr_batch._pdf_page_count", return_value=1):
+                record = validate_document(source, manifest, cwd=root)
+
+            self.assertTrue(record.passed)
+            self.assertEqual(record.ocr_pages, [1])
+            self.assertEqual(record.output, "processed/分组/sample.pdf.md")
+
     def test_rejects_uncovered_duplicate_and_out_of_range_pages(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

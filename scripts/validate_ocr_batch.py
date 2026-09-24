@@ -201,9 +201,12 @@ def select_ocr_sources(
 
 
 def _resolve_output(record: Optional[dict[str, Any]], cwd: Path) -> Optional[Path]:
-    if not record or not record.get("output"):
+    if not record:
         return None
-    output = Path(str(record["output"])).expanduser()
+    output_value = record.get("output_path") or record.get("output")
+    if not output_value:
+        return None
+    output = Path(str(output_value)).expanduser()
     return output if output.is_absolute() else cwd / output
 
 

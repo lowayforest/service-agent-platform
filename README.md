@@ -17,6 +17,7 @@
 - [评测手册](docs/评测手册.md)：固定评测集、自动检查、失败分析和参数调优。
 - [数据治理与预处理计划](docs/数据治理与预处理计划.md)：正式资料分级、批次审计、OCR、质检、入库与回归步骤。
 - [本地微调冒烟测试](finetune/README.md)：Apple MLX 环境、训练样例、可复现命令和实测结果。
+- [前端 Demo 与 Docker 部署](docs/前端Demo与Docker部署.md)：React 本地开发、Nginx 代理、11451 端口部署及排错。
 
 ## 本地最小 RAG 已实现
 
@@ -61,6 +62,7 @@ scripts/evaluate.py     # 批量调用 API 并生成评测报告
 deploy/vllm/            # 双 5090 vLLM 启动、停止与冒烟检查脚本
 evals/                  # 可提交的公开评测集
 tests/                  # 分段、检索、边界和预处理测试
+frontend/               # React Demo、Nginx 配置和 Docker Compose
 data/manifests/         # 本地生成的文档审计台账，不提交 Git
 data/processed/         # 本地生成的标准 Markdown，不提交 Git
 data/index.json         # 本地生成的向量索引，不提交 Git

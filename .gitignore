@@ -24,6 +24,13 @@ __pycache__/
 /models/
 /deploy/vllm/runtime.env
 
+# React 前端依赖、构建产物和本地配置
+/frontend/node_modules/
+/frontend/dist/
+/frontend/.env
+/frontend/.env.local
+/frontend/.env.*.local
+
 # 本地微调产物（训练样例配置可以提交，权重和私有数据不能提交）
 /finetune/outputs/
 /finetune/data/private/

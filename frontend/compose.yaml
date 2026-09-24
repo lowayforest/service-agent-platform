@@ -1,0 +1,18 @@
+name: service-agent-demo
+
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: service-agent-demo-frontend:local
+    container_name: service-agent-demo-frontend
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${DEMO_BIND_ADDRESS:-0.0.0.0}:${DEMO_PORT:-11451}:80"
+    environment:
+      RAG_API_HOST: "${RAG_API_HOST:-host.docker.internal}"
+      RAG_API_PORT: "${RAG_API_PORT:-8001}"
+    extra_hosts:
+      - "host.docker.internal=host-gateway"

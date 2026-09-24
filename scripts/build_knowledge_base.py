@@ -415,11 +415,13 @@ def preprocess_all(
         if duplicate_of:
             result_payload = _duplicate_result(source_name, duplicate_of)
             output_path = None
+            record_ocr_backend = args.ocr_backend
             counters["duplicates_skipped"] += 1
             action = "duplicate_skipped"
         elif _can_resume_ready(old, audit, args.ocr_backend):
             result_payload = old["result"]
             output_path = old["output_path"]
+            record_ocr_backend = str(old.get("ocr_backend") or args.ocr_backend)
             counters["resumed_ready"] += 1
             action = "resume"
         else:
@@ -434,6 +436,7 @@ def preprocess_all(
             result_payload = result.as_dict()
             destination = output_path_for(source, args.output_dir, source_root)
             output_path = str(destination.resolve()) if result.output else None
+            record_ocr_backend = args.ocr_backend
             counters["processed"] += 1
             action = result.status
 
@@ -445,7 +448,7 @@ def preprocess_all(
             "size_bytes": stat.st_size,
             "mtime_ns": stat.st_mtime_ns,
             "sha256": audit.sha256,
-            "ocr_backend": args.ocr_backend,
+            "ocr_backend": record_ocr_backend,
             "audit_options": {
                 "pdf_page_limit": args.pdf_page_limit,
                 "minimum_text_characters": args.minimum_text_characters,

@@ -421,6 +421,25 @@ class KnowledgeBuilderTests(unittest.TestCase):
             summary = json.loads((manifests / "summary.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["statuses"], {"ready": 1})
 
+            reused_code = self.run_main(
+                [
+                    str(raw),
+                    "--output-dir",
+                    str(output),
+                    "--manifest-dir",
+                    str(manifests),
+                    "--ocr-backend",
+                    "none",
+                    "--preprocess-only",
+                ]
+            )
+            self.assertEqual(reused_code, 0)
+            state = json.loads(
+                (manifests / "build-state.jsonl").read_text(encoding="utf-8").strip()
+            )
+            self.assertEqual(state["ocr_backend"], "paddleocr")
+            self.assertEqual(state["result"]["parser"], "fake-ocr")
+
 
 if __name__ == "__main__":
     unittest.main()

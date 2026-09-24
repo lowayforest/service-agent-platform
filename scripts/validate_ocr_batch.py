@@ -70,6 +70,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="自动检查有失败项时返回状态码 1",
     )
+    parser.add_argument(
+        "--ocr-only",
+        action="store_true",
+        help=(
+            "只检查台账中状态为 ready 且解析器名称包含 paddleocr 的 PDF；"
+            "用于从完整资料目录中排除原生文本 PDF 和重复副本"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -146,8 +154,24 @@ def _match_manifest_record(
     source: Path,
     records: Sequence[dict[str, Any]],
 ) -> Optional[dict[str, Any]]:
-    source_forms = {source.as_posix(), str(source.resolve()), source.name}
-    exact = [record for record in records if str(record.get("source", "")) in source_forms]
+    source_posix = source.as_posix()
+    resolved_posix = source.resolve().as_posix()
+
+    def path_matches(record: dict[str, Any]) -> bool:
+        record_source = str(record.get("source", "")).replace("\\", "/")
+        if record_source.startswith("./"):
+            record_source = record_source[2:]
+        record_source_path = str(record.get("source_path", "")).replace("\\", "/")
+        return bool(
+            record_source
+            and (
+                record_source in {source_posix, resolved_posix, source.name}
+                or resolved_posix.endswith("/" + record_source)
+                or record_source_path == resolved_posix
+            )
+        )
+
+    exact = [record for record in records if path_matches(record)]
     if len(exact) == 1:
         return exact[0]
 
@@ -157,6 +181,23 @@ def _match_manifest_record(
         if Path(str(record.get("source", ""))).name == source.name
     ]
     return by_name[0] if len(by_name) == 1 else None
+
+
+def _is_ocr_manifest_record(record: Optional[dict[str, Any]]) -> bool:
+    if not record or record.get("status") != "ready":
+        return False
+    return "paddleocr" in str(record.get("parser", "")).lower()
+
+
+def select_ocr_sources(
+    sources: Sequence[Path],
+    manifest_records: Sequence[dict[str, Any]],
+) -> list[Path]:
+    return [
+        source
+        for source in sources
+        if _is_ocr_manifest_record(_match_manifest_record(source, manifest_records))
+    ]
 
 
 def _resolve_output(record: Optional[dict[str, Any]], cwd: Path) -> Optional[Path]:
@@ -382,8 +423,13 @@ def main() -> int:
         for path in discover_documents(args.sources)
         if path.suffix.lower() == ".pdf"
     ]
+    if args.ocr_only:
+        sources = select_ocr_sources(sources, manifest_records)
     if not sources:
-        print("没有找到 PDF 文件。")
+        if args.ocr_only:
+            print("没有找到台账状态为 ready 且由 PaddleOCR 生成的 PDF。")
+        else:
+            print("没有找到 PDF 文件。")
         return 2
 
     validation_records = [

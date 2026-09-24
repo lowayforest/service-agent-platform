@@ -6,15 +6,51 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts.validate_ocr_batch import (
+    _match_manifest_record,
     extract_ocr_page_numbers,
     format_page_ranges,
     render_markdown_report,
+    select_ocr_sources,
     summarize,
     validate_document,
 )
 
 
 class OCRValidationTests(unittest.TestCase):
+    def test_selects_only_ready_ocr_sources_from_full_corpus_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            scan = root / "扫描资料" / "同名.pdf"
+            native = root / "文本资料" / "同名.pdf"
+            duplicate = root / "扫描资料" / "重复.pdf"
+            for source in (scan, native, duplicate):
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_bytes(b"pdf")
+            records = [
+                {
+                    "source": "扫描资料/同名.pdf",
+                    "status": "ready",
+                    "parser": "paddleocr-vl-v1.6",
+                },
+                {
+                    "source": "文本资料/同名.pdf",
+                    "status": "ready",
+                    "parser": "pypdf",
+                },
+                {
+                    "source": "扫描资料/重复.pdf",
+                    "status": "duplicate_skipped",
+                    "parser": "none",
+                },
+            ]
+
+            self.assertEqual(_match_manifest_record(scan, records), records[0])
+            self.assertEqual(_match_manifest_record(native, records), records[1])
+            self.assertEqual(
+                select_ocr_sources([scan, native, duplicate], records),
+                [scan],
+            )
+
     def test_extracts_page_numbers_and_formats_ranges(self) -> None:
         markdown = "## 第 1 页（OCR）\n正文\n\n## 第 3 页（OCR）\n正文"
 

@@ -28,7 +28,17 @@ deploy/vllm/download-models.sh
 
 ## 启动
 
-确认 OCR 和 Ollama 模型没有占用 GPU 后执行：
+确认 OCR 和 Ollama 模型没有占用 GPU 后，推荐在仓库根目录执行统一启动脚本：
+
+```bash
+deploy/start-services.sh
+```
+
+脚本会依次启动并检查 `vllm-chat`、`vllm-embedding` 和 `rag-api` 三个 Screen 会话。只有
+前一个服务通过健康检查后才会启动下一个服务；重复执行时会复用已经存在且健康的会话。
+默认每个服务最多等待 600 秒，可临时通过 `SERVICE_START_TIMEOUT` 调整。
+
+需要逐个手工启动 vLLM 时执行：
 
 ```bash
 mkdir -p logs
@@ -52,6 +62,18 @@ deploy/vllm/check-services.sh
 ```
 
 ## 停止
+
+推荐在仓库根目录执行统一停止脚本：
+
+```bash
+deploy/stop-services.sh
+```
+
+脚本按照 FastAPI、生成模型、向量模型的顺序停止三个 Screen 会话，并确认 `8001`、`8100`
+和 `8101` 端口已经释放。它不会停止 Docker 前端容器，也不会强制终止不属于这些 Screen
+会话的未知进程。
+
+需要逐个手工停止 vLLM 时执行：
 
 ```bash
 screen -S vllm-chat -X quit

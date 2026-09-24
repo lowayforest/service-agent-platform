@@ -23,6 +23,45 @@ const initialMessage: ChatMessage = {
     '您好，我是长江航道公共服务智能助手。您可以向我咨询知识库中的法律法规、技术标准和历史公共服务资料，我会尽量给出可核验的来源。',
 }
 
+let fallbackMessageSequence = 0
+
+function createMessageId() {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID()
+  }
+
+  fallbackMessageSequence += 1
+  return `message-${Date.now().toString(36)}-${fallbackMessageSequence.toString(36)}`
+}
+
+async function writeClipboardText(text: string) {
+  if (typeof navigator.clipboard?.writeText === 'function') {
+    try {
+      await navigator.clipboard.writeText(text)
+      return
+    } catch {
+      // 普通 HTTP 或浏览器拒绝 Clipboard API 时，继续使用兼容回退。
+    }
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', '')
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  textarea.style.pointerEvents = 'none'
+  document.body.appendChild(textarea)
+  textarea.select()
+
+  try {
+    if (!document.execCommand('copy')) {
+      throw new Error('浏览器未允许复制到剪贴板')
+    }
+  } finally {
+    textarea.remove()
+  }
+}
+
 function Icon({ name, size = 20 }: { name: string; size?: number }) {
   const paths: Record<string, React.ReactNode> = {
     plus: <path d="M12 5v14M5 12h14" />,
@@ -102,9 +141,13 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   const [copied, setCopied] = useState(false)
 
   async function copyAnswer() {
-    await navigator.clipboard.writeText(message.content)
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1600)
+    try {
+      await writeClipboardText(message.content)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1600)
+    } catch {
+      setCopied(false)
+    }
   }
 
   if (message.role === 'user') {
@@ -218,7 +261,7 @@ function App() {
     if (!normalized || sending) return
 
     const userMessage: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: createMessageId(),
       role: 'user',
       content: normalized,
     }
@@ -235,7 +278,7 @@ function App() {
       setMessages((current) => [
         ...current,
         {
-          id: crypto.randomUUID(),
+          id: createMessageId(),
           role: 'assistant',
           content: response.answer,
           sources: response.sources,
@@ -246,7 +289,7 @@ function App() {
       setMessages((current) => [
         ...current,
         {
-          id: crypto.randomUUID(),
+          id: createMessageId(),
           role: 'assistant',
           content: `暂时无法完成本次问答：${error instanceof Error ? error.message : '服务连接异常'}。请稍后重试。`,
           failed: true,

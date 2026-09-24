@@ -2,7 +2,7 @@
 
 > 当前阶段：双 RTX 5090 服务器 RAG 基线已验证，进入正式数据治理与 vLLM 生产化验证
 >
-> 最近更新：2026-09-22
+> 最近更新：2026-09-24
 
 本项目拟建设一个面向船东企业、工程建设单位、设计院、沿江港航企业及社会公众的航道对外服务智能体。第一阶段以千问系列模型为核心，通过 RAG（检索增强生成）连接航道专业资料，先实现答案可追溯的知识问答；随后再接入实时航道数据和业务系统，逐步实现办事指引、航评咨询、事项进度查询和定向信息推送。
 
@@ -10,6 +10,7 @@
 
 ## 文档导航
 
+- [API 接口文档](docs/API接口文档.md)：`8001` 端口、GET/POST 方法、请求参数、响应字段和错误示例。
 - [操作手册](docs/操作手册.md)：本地启动、资料入库、接口调用、测试和常见问题。
 - [部署手册](docs/部署手册.md)：本机部署、双 RTX 5090 服务器部署、vLLM 升级路线、安全和验收。
 - [vLLM 最终部署方案](docs/vLLM最终部署方案.md)：双 5090 标准 vLLM 验证，以及 Atlas 300I Duo 上的 vLLM-Ascend 生产路线。
@@ -166,21 +167,21 @@ DOCX 内嵌图片可在独立 OCR 环境中处理；旧版 `.doc` 需要先转�
 ### 4. 启动和调用 API
 
 ```bash
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8001
 ```
 
-浏览器接口文档：<http://127.0.0.1:8000/docs>
+浏览器接口文档：<http://127.0.0.1:8001/docs>
 
 健康检查：
 
 ```bash
-curl http://127.0.0.1:8000/api/health
+curl http://127.0.0.1:8001/api/health
 ```
 
 知识库问答：
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/chat \
+curl -X POST http://127.0.0.1:8001/api/chat \
   -H 'Content-Type: application/json' \
   -d '{"question":"第一阶段为什么应先做知识库问答？"}'
 ```
@@ -188,7 +189,7 @@ curl -X POST http://127.0.0.1:8000/api/chat \
 实时问题边界测试：
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/chat \
+curl -X POST http://127.0.0.1:8001/api/chat \
   -H 'Content-Type: application/json' \
   -d '{"question":"今天某航段的实时水深是多少？"}'
 ```

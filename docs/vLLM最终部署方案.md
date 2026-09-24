@@ -1,6 +1,6 @@
 # vLLM 最终部署方案
 
-> 更新日期：2026-09-22
+> 更新日期：2026-09-24
 >
 > 适用范围：实验室双 RTX 5090 验证服务器、长江航道局 Huanghe 2280 V2 目标服务器
 
@@ -11,7 +11,7 @@
 ```text
 用户
   ↓
-FastAPI RAG :8000
+FastAPI RAG :8001
   ├─ OpenAI Chat Completions :8100/v1   → 千问生成模型
   └─ OpenAI Embeddings       :8101/v1   → 千问向量模型
 ```
@@ -152,10 +152,10 @@ curl --fail --silent --show-error \
 ```bash
 source .venv/bin/activate
 python -m scripts.ingest README.md
-uvicorn app.main:app --host 127.0.0.1 --port 8000
+uvicorn app.main:app --host 127.0.0.1 --port 8001
 ```
 
-另开终端检查 `http://127.0.0.1:8000/api/health`。返回值中的两个 backend 都应为
+另开终端检查 `http://127.0.0.1:8001/api/health`。返回值中的两个 backend 都应为
 `openai`，模型名应分别为 `qwen3.5` 和 `qwen3-embedding`，`indexed_chunks` 应大于 0。
 
 ## 5. 实验室双 RTX 5090 验证

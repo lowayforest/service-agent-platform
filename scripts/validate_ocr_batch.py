@@ -29,6 +29,7 @@ class OCRValidationRecord:
     total_pages: int
     ocr_pages: list[int]
     confirmed_blank_pages: list[int]
+    accepted_non_content_pages: list[int]
     uncovered_pages: list[int]
     duplicate_page_labels: list[int]
     out_of_range_page_labels: list[int]
@@ -76,6 +77,14 @@ def parse_args() -> argparse.Namespace:
         help=(
             "只检查台账中状态为 ready 且解析器名称包含 paddleocr 的 PDF；"
             "用于从完整资料目录中排除原生文本 PDF 和重复副本"
+        ),
+    )
+    parser.add_argument(
+        "--page-exceptions",
+        type=Path,
+        help=(
+            "人工确认无业务内容页的 JSONL 台账；每条必须包含 source、sha256、pages、"
+            "reason、reviewer 和 reviewed_at"
         ),
     )
     return parser.parse_args()
@@ -215,6 +224,7 @@ def validate_document(
     manifest_record: Optional[dict[str, Any]],
     *,
     cwd: Optional[Path] = None,
+    page_exception: Optional[dict[str, Any]] = None,
 ) -> OCRValidationRecord:
     reference = (cwd or Path.cwd()).resolve()
     issues: list[str] = []
@@ -223,6 +233,7 @@ def validate_document(
     output_path = _resolve_output(manifest_record, reference)
     total_pages = 0
     markdown = ""
+    source_sha256 = sha256_file(source)
 
     if manifest_record is None:
         issues.append("处理台账中没有找到唯一对应记录。")
@@ -266,7 +277,56 @@ def validate_document(
             confirmed_blank = detect_confirmed_blank_pages(source, candidate_missing)
         except Exception as exc:
             issues.append(str(exc))
-    uncovered = sorted(set(candidate_missing) - set(confirmed_blank))
+    accepted_non_content: list[int] = []
+    if page_exception:
+        required_metadata = ("reason", "reviewer", "reviewed_at")
+        missing_metadata = [
+            field
+            for field in required_metadata
+            if not str(page_exception.get(field, "")).strip()
+        ]
+        if page_exception.get("sha256") != source_sha256:
+            issues.append("人工页例外的 SHA-256 与当前原文件不一致，例外未生效。")
+        elif missing_metadata:
+            issues.append(
+                "人工页例外缺少必填信息：" + "、".join(missing_metadata) + "，例外未生效。"
+            )
+        else:
+            declared_pages = page_exception.get("pages")
+            if not isinstance(declared_pages, list) or not all(
+                isinstance(page, int) and not isinstance(page, bool)
+                for page in declared_pages
+            ):
+                issues.append("人工页例外的 pages 必须是整数数组，例外未生效。")
+            else:
+                invalid_pages = sorted(
+                    page for page in set(declared_pages) if page not in expected_pages
+                )
+                stale_pages = sorted(
+                    page for page in set(declared_pages) if page not in candidate_missing
+                )
+                redundant_blank_pages = sorted(
+                    page for page in set(declared_pages) if page in confirmed_blank
+                )
+                if invalid_pages:
+                    issues.append(
+                        "人工页例外包含越界页码：" + format_page_ranges(invalid_pages)
+                    )
+                if stale_pages:
+                    issues.append(
+                        "人工页例外包含当前并未缺失的页码："
+                        + format_page_ranges(stale_pages)
+                    )
+                if redundant_blank_pages:
+                    issues.append(
+                        "人工页例外包含已经确认为纯白的页码："
+                        + format_page_ranges(redundant_blank_pages)
+                    )
+                if not invalid_pages and not stale_pages and not redundant_blank_pages:
+                    accepted_non_content = sorted(set(declared_pages))
+    uncovered = sorted(
+        set(candidate_missing) - set(confirmed_blank) - set(accepted_non_content)
+    )
     if uncovered:
         issues.append(
             "以下页面既无 OCR 输出，也未被确认为纯白空白页："
@@ -286,7 +346,7 @@ def validate_document(
 
     return OCRValidationRecord(
         source=str(source.resolve()),
-        sha256=sha256_file(source),
+        sha256=source_sha256,
         manifest_status=status,
         parser=parser,
         output=output_label,
@@ -294,6 +354,7 @@ def validate_document(
         total_pages=total_pages,
         ocr_pages=unique_pages,
         confirmed_blank_pages=confirmed_blank,
+        accepted_non_content_pages=accepted_non_content,
         uncovered_pages=uncovered,
         duplicate_page_labels=duplicate_labels,
         out_of_range_page_labels=out_of_range,
@@ -328,6 +389,9 @@ def summarize(records: Sequence[OCRValidationRecord]) -> dict[str, int]:
         "pdf_pages": sum(record.total_pages for record in records),
         "ocr_content_pages": sum(len(record.ocr_pages) for record in records),
         "confirmed_blank_pages": sum(len(record.confirmed_blank_pages) for record in records),
+        "accepted_non_content_pages": sum(
+            len(record.accepted_non_content_pages) for record in records
+        ),
         "text_characters": sum(record.text_characters for record in records),
         "html_tables": sum(record.html_tables for record in records),
         "image_references": sum(record.image_references for record in records),
@@ -354,22 +418,24 @@ def render_markdown_report(
         f"| PDF 原始页 | {summary['pdf_pages']} |",
         f"| 有内容 OCR 页 | {summary['ocr_content_pages']} |",
         f"| 确认纯白空白页 | {summary['confirmed_blank_pages']} |",
+        f"| 人工确认无业务内容页 | {summary['accepted_non_content_pages']} |",
         f"| 提取字符 | {summary['text_characters']} |",
         f"| HTML 表格 | {summary['html_tables']} |",
         f"| 图片引用 | {summary['image_references']} |",
         "",
         "## 文档明细",
         "",
-        "| 结果 | 文件 | 原始页 | OCR 页 | 空白页 | 表格 | 图片 | 字符 |",
-        "| --- | --- | ---: | ---: | --- | ---: | ---: | ---: |",
+        "| 结果 | 文件 | 原始页 | OCR 页 | 空白页 | 人工例外页 | 表格 | 图片 | 字符 |",
+        "| --- | --- | ---: | ---: | --- | --- | ---: | ---: | ---: |",
     ]
     for record in records:
         filename = Path(record.source).name.replace("|", "\\|")
         result = "通过" if record.passed else "失败"
         lines.append(
             f"| {result} | {filename} | {record.total_pages} | {len(record.ocr_pages)} | "
-            f"{format_page_ranges(record.confirmed_blank_pages)} | {record.html_tables} | "
-            f"{record.image_references} | {record.text_characters} |"
+            f"{format_page_ranges(record.confirmed_blank_pages)} | "
+            f"{format_page_ranges(record.accepted_non_content_pages)} | "
+            f"{record.html_tables} | {record.image_references} | {record.text_characters} |"
         )
 
     lines.extend(["", "## 自动检查问题", ""])
@@ -420,6 +486,12 @@ def main() -> int:
         ]
     except (OSError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
+    try:
+        exception_records = (
+            read_jsonl(args.page_exceptions) if args.page_exceptions else []
+        )
+    except (OSError, ValueError) as exc:
+        raise SystemExit(str(exc)) from exc
 
     sources = [
         path
@@ -436,7 +508,11 @@ def main() -> int:
         return 2
 
     validation_records = [
-        validate_document(source, _match_manifest_record(source, manifest_records))
+        validate_document(
+            source,
+            _match_manifest_record(source, manifest_records),
+            page_exception=_match_manifest_record(source, exception_records),
+        )
         for source in sources
     ]
     batch_summary = summarize(validation_records)

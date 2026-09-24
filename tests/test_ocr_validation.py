@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from app.document_preprocessing import sha256_file
 from scripts.validate_ocr_batch import (
     _match_manifest_record,
     extract_ocr_page_numbers,
@@ -114,6 +115,56 @@ class OCRValidationTests(unittest.TestCase):
             self.assertTrue(record.passed)
             self.assertEqual(record.ocr_pages, [1])
             self.assertEqual(record.output, "processed/分组/sample.pdf.md")
+
+    def test_accepts_reviewed_non_content_page_only_for_matching_checksum(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "sample.pdf"
+            output = root / "sample.pdf.md"
+            source.write_bytes(b"fake-pdf")
+            output.write_text("## 第 1 页（OCR）\n正文\n", encoding="utf-8")
+            manifest = {
+                "source": "sample.pdf",
+                "status": "ready",
+                "parser": "paddleocr-vl-v1.6",
+                "output_path": str(output),
+                "warnings": [],
+            }
+            exception = {
+                "source": "sample.pdf",
+                "sha256": sha256_file(source),
+                "pages": [2],
+                "reason": "仅页眉、页脚和页码，无业务文字",
+                "reviewer": "tester",
+                "reviewed_at": "2026-09-24",
+            }
+
+            with (
+                patch("scripts.validate_ocr_batch._pdf_page_count", return_value=2),
+                patch(
+                    "scripts.validate_ocr_batch.detect_confirmed_blank_pages",
+                    return_value=[],
+                ),
+            ):
+                accepted = validate_document(
+                    source,
+                    manifest,
+                    cwd=root,
+                    page_exception=exception,
+                )
+                rejected = validate_document(
+                    source,
+                    manifest,
+                    cwd=root,
+                    page_exception={**exception, "sha256": "changed"},
+                )
+
+            self.assertTrue(accepted.passed)
+            self.assertEqual(accepted.accepted_non_content_pages, [2])
+            self.assertEqual(accepted.uncovered_pages, [])
+            self.assertFalse(rejected.passed)
+            self.assertEqual(rejected.accepted_non_content_pages, [])
+            self.assertIn("SHA-256", " ".join(rejected.issues))
 
     def test_rejects_uncovered_duplicate_and_out_of_range_pages(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
